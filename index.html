@@ -1253,9 +1253,15 @@ function update(){
   const activeCatMeta = cats.find(c=>c.id===state.activeCat);
   const activeSubMeta = subs.find(s=>s.id===state.activeSub);
   const activeSub2Meta = sub2s.find(s2=>s2.id===state.activeSub2);
+  const outLast = (a,b) => {
+    const aOut = totalQty(a) <= 0 ? 1 : 0;
+    const bOut = totalQty(b) <= 0 ? 1 : 0;
+    if(aOut !== bOut) return aOut - bOut;
+    return isAdmin() ? (a.itemOrder-b.itemOrder) : (totalQty(b)-totalQty(a) || a.itemOrder-b.itemOrder);
+  };
   const items = state.items.filter(it=>it.catId===state.activeCat && it.subId===state.activeSub && !it.placeholder
       && (state.activeSub2 === "" || it.sub2Id===state.activeSub2))
-    .sort(isAdmin() ? (a,b)=>a.itemOrder-b.itemOrder : (a,b)=>totalQty(b)-totalQty(a) || a.itemOrder-b.itemOrder);
+    .sort(outLast);
 
   document.getElementById("content").innerHTML = `
     <div class="section-head">
