@@ -446,6 +446,7 @@ button{font-family:inherit;}
   .bottle-columns{grid-template-columns:1fr;}
   .bottle-quick button{height:26px; font-size:10.5px;}
 }
+.prev-tag{display:inline-block;background:#111;color:#FFD400;font-size:10px;font-weight:700;padding:1px 6px;border-radius:8px;vertical-align:middle;white-space:nowrap}
 </style>
 </head>
 <body>
@@ -1864,6 +1865,7 @@ function myDraftOrder(){
   return state.orders.find(o=>o.store===state.role && o.status==="draft");
 }
 async function createDraftOrder(store){
+  if(state.orders.some(o=>o.store===store && o.status==="draft")) return; // μία ανοιχτή παραγγελία ανά κατάστημα
   const id = "ord_" + Date.now().toString(36) + Math.random().toString(36).slice(2,7);
   await setDoc(doc(state.db, ORDERS_COLLECTION, id), {
     store, storeName: roleName(store), status: "draft",
@@ -1983,7 +1985,7 @@ function openCompleteOrderModal(orderId){
   });
   if(products.length){
     sections.push(`<h4>Προϊόντα αποθήκης</h4>` + products.map((p,idx)=>
-      checkRow(`${p.company?p.company+" — ":""}${p.name}`, p.code, p.qty, `data-type="product" data-idx="${idx}"`)
+      checkRow(`${p.fromPrevious?"[Από προηγούμενη] ":""}${p.company?p.company+" — ":""}${p.name}`, p.code, p.qty, `data-type="product" data-idx="${idx}"`)
     ).join(""));
   }
   if(extinguishers.length){
@@ -2040,12 +2042,12 @@ function openCompleteOrderModal(orderId){
         if(remQty>0){ if(!remainingNamed[client]) remainingNamed[client]={}; remainingNamed[client][code]=remQty; }
       } else if(type==="product"){
         const line = products[Number(chk.dataset.idx)];
-        if(shipQty>0) shippedProducts.push({...line, qty: shipQty});
-        if(remQty>0) remainingProducts.push({...line, qty: remQty});
+        if(shipQty>0){ const sl={...line, qty: shipQty}; delete sl.fromPrevious; shippedProducts.push(sl); }
+        if(remQty>0) remainingProducts.push({...line, qty: remQty, fromPrevious:true});
       } else if(type==="extinguisher"){
         const line = extinguishers[Number(chk.dataset.idx)];
-        if(shipQty>0) shippedExtinguishers.push({...line, qty: shipQty});
-        if(remQty>0) remainingExtinguishers.push({...line, qty: remQty});
+        if(shipQty>0){ const sl={...line, qty: shipQty}; delete sl.fromPrevious; shippedExtinguishers.push(sl); }
+        if(remQty>0) remainingExtinguishers.push({...line, qty: remQty, fromPrevious:true});
       }
     });
 
@@ -2078,12 +2080,25 @@ function openCompleteOrderModal(orderId){
       || Object.values(remainingNamed).some(m=>Object.values(m).some(v=>v>0))
       || remainingProducts.length || remainingExtinguishers.length;
     if(hasRemaining){
-      const newId = "ord_" + Date.now().toString(36) + Math.random().toString(36).slice(2,7);
-      await setDoc(doc(state.db, ORDERS_COLLECTION, newId), {
-        store: order.store, storeName: order.storeName, status: "draft",
-        createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
-        bottles: remainingBottles, namedClientBottles: remainingNamed,
-        products: remainingProducts, extinguishers: remainingExtinguishers
+      const target = await getOrCreateDraftOrderForStore(order.store);
+      const tRef = doc(state.db, ORDERS_COLLECTION, target.id);
+      const bottles = {...(target.bottles||{})}, prevBottles = {...(target.prevBottles||{})};
+      Object.entries(remainingBottles).forEach(([c,q])=>{ bottles[c]=(Number(bottles[c])||0)+q; prevBottles[c]=(Number(prevBottles[c])||0)+q; });
+      const named = JSON.parse(JSON.stringify(target.namedClientBottles||{}));
+      const prevNamed = JSON.parse(JSON.stringify(target.prevNamedClientBottles||{}));
+      Object.entries(remainingNamed).forEach(([cl,m])=>{
+        named[cl]=named[cl]||{}; prevNamed[cl]=prevNamed[cl]||{};
+        Object.entries(m).forEach(([c,q])=>{ named[cl][c]=(Number(named[cl][c])||0)+q; prevNamed[cl][c]=(Number(prevNamed[cl][c])||0)+q; });
+      });
+      const prods = [...(target.products||[])];
+      remainingProducts.forEach(l=>{
+        const k = prods.findIndex(x=>x.fromPrevious && l.itemId && x.itemId===l.itemId);
+        if(k>=0) prods[k] = {...prods[k], qty: Number(prods[k].qty||0)+l.qty}; else prods.push(l);
+      });
+      const exts = [...(target.extinguishers||[]), ...remainingExtinguishers];
+      await updateDoc(tRef, {
+        bottles, prevBottles, namedClientBottles: named, prevNamedClientBottles: prevNamed,
+        products: prods, extinguishers: exts, updatedAt: new Date().toISOString()
       });
     }
 
@@ -2220,7 +2235,7 @@ function openProductsPopup(orderId){
   const rows = lines.map((l,idx)=>`
     <div class="order-line">
       <span class="order-line-code">#${esc(l.code||"")}</span>
-      <span class="order-line-name">${l.company ? `<span style="color:var(--flame); font-weight:700;">` + esc(l.company) + `</span> — ` : ""}${esc(l.name)} <b>× ${l.qty}</b>${!l.itemId ? ' <span style="font-size:10.5px; color:var(--text-faint);">(χειροκίνητα)</span>' : ''}</span>
+      <span class="order-line-name">${l.fromPrevious?'<span class="prev-tag">Από προηγούμενη</span> ':''}${l.company ? `<span style="color:var(--flame); font-weight:700;">` + esc(l.company) + `</span> — ` : ""}${esc(l.name)} <b>× ${l.qty}</b>${!l.itemId ? ' <span style="font-size:10.5px; color:var(--text-faint);">(χειροκίνητα)</span>' : ''}</span>
       ${editable ? `<button data-action="order-remove-product" data-order="${order.id}" data-idx="${idx}" style="background:none;border:none;color:var(--warn);cursor:pointer;">✕</button>` : ""}
     </div>`).join("");
 
@@ -2324,13 +2339,13 @@ function orderTilesHtml(order, opts){
 function orderSlipHtml(order){
   const clients = NAMED_CLIENTS[order.store] || [];
   const bottleLines = BOTTLE_TYPES
-    .map(b=>({...b, qty: Number((order.bottles||{})[b.code]||0)}))
+    .map(b=>{ const q=Number((order.bottles||{})[b.code]||0); const pv=Math.min(q,Number((order.prevBottles||{})[b.code]||0)); return {...b, qty:q, name:b.name+(pv>0?` [↩ ${pv} από προηγούμενη]`:"")}; })
     .filter(b=>b.qty>0);
   const bottleTotalQty = bottleLines.reduce((a,b)=>a+b.qty,0);
 
   const namedSections = clients.map(name=>{
     const map = (order.namedClientBottles && order.namedClientBottles[name]) || {};
-    const lines = BOTTLE_TYPES.map(b=>({...b, qty:Number(map[b.code]||0)})).filter(b=>b.qty>0);
+    const lines = BOTTLE_TYPES.map(b=>{ const q=Number(map[b.code]||0); const pv=Math.min(q,Number(((order.prevNamedClientBottles||{})[name]||{})[b.code]||0)); return {...b, qty:q, name:b.name+(pv>0?` [↩ ${pv} από προηγούμενη]`:"")}; }).filter(b=>b.qty>0);
     const total = lines.reduce((a,b)=>a+b.qty,0);
     return {name, lines, total};
   }).filter(s=>s.lines.length>0);
@@ -2367,7 +2382,7 @@ function orderSlipHtml(order){
     ${products.length ? `
       <div class="order-section">
         <h4>Προϊόντα αποθήκης</h4>
-        ${products.map(p=>lineRow(p.code, (p.company ? p.company + " — " : "") + p.name, p.qty)).join("")}
+        ${products.map(p=>lineRow(p.code, (p.fromPrevious?"[Από προηγούμενη] ":"") + (p.company ? p.company + " — " : "") + p.name, p.qty)).join("")}
         <div class="order-line" style="border-top:1px solid var(--border); font-weight:700;"><span></span><span>Σύνολο τεμαχίων</span><b>${productsTotalQty}</b></div>
       </div>` : ""}
 
@@ -2434,7 +2449,7 @@ function openCartModal(){
   const productRows = productCart.map((p,idx)=>`
     <div class="order-line">
       <span class="order-line-code">#${esc(p.code||"")}</span>
-      <span class="order-line-name">${p.company?`<span style="color:var(--flame); font-weight:700;">${esc(p.company)}</span> — `:""}${esc(p.name)} <b>× ${p.qty}</b></span>
+      <span class="order-line-name">${p.fromPrevious?'<span class="prev-tag">Από προηγούμενη</span> ':''}${p.company?`<span style="color:var(--flame); font-weight:700;">${esc(p.company)}</span> — `:""}${esc(p.name)} <b>× ${p.qty}</b></span>
       <button data-action="cart-remove" data-idx="${idx}" style="background:none;border:none;color:var(--warn);cursor:pointer;">✕</button>
     </div>`).join("");
 
@@ -2480,7 +2495,7 @@ function openCartModal(){
     const order = await getOrCreateDraftOrderForStore(state.role);
     const products = (order.products||[]).slice();
     productCart.forEach(p=>{
-      const existingIdx = products.findIndex(x=>x.itemId===p.itemId);
+      const existingIdx = products.findIndex(x=>x.itemId===p.itemId && !x.fromPrevious);
       if(existingIdx >= 0){ products[existingIdx] = {...products[existingIdx], qty: products[existingIdx].qty + p.qty}; }
       else { products.push({...p}); }
     });
@@ -2604,21 +2619,21 @@ function orderPreviewLines(order, limit){
   const lines = [];
   BOTTLE_TYPES.forEach(b=>{
     const qty = Number((order.bottles||{})[b.code]||0);
-    if(qty>0) lines.push(`${b.name} × ${qty}`);
+    if(qty>0){ const pv=Math.min(qty,Number((order.prevBottles||{})[b.code]||0)); lines.push(`${b.name} × ${qty}${pv>0?` (↩ ${pv} από προηγούμενη)`:""}`); }
   });
   const clients = NAMED_CLIENTS[order.store] || [];
   clients.forEach(name=>{
     const map = (order.namedClientBottles && order.namedClientBottles[name]) || {};
     BOTTLE_TYPES.forEach(b=>{
       const qty = Number(map[b.code]||0);
-      if(qty>0) lines.push(`${b.name} (${name}) × ${qty}`);
+      if(qty>0){ const pv=Math.min(qty,Number(((order.prevNamedClientBottles||{})[name]||{})[b.code]||0)); lines.push(`${b.name} (${name}) × ${qty}${pv>0?` (↩ ${pv} από προηγούμενη)`:""}`); }
     });
   });
   (order.products||[]).forEach(p=>{
-    lines.push(`${p.company?p.company+" — ":""}${p.name} × ${p.qty}`);
+    lines.push(`${p.fromPrevious?"↩ Από προηγούμενη: ":""}${p.company?p.company+" — ":""}${p.name} × ${p.qty}`);
   });
   (order.extinguishers||[]).forEach(e=>{
-    lines.push(`${e.customerName||e.name||""} × ${e.qty}`);
+    lines.push(`${e.fromPrevious?"↩ Από προηγούμενη: ":""}${e.customerName||e.name||""} × ${e.qty}`);
   });
   const shown = lines.slice(0, limit);
   const extra = lines.length - shown.length;
@@ -2733,7 +2748,7 @@ function openAddOrderProductModal(orderId){
     const html = selected.length ? selected.map((l,idx)=>`
         <div class="order-line">
           <span class="order-line-code">#${esc(l.code||"")}</span>
-          <span class="order-line-name">${l.company ? `<span style="color:var(--flame); font-weight:700;">` + esc(l.company) + `</span> — ` : ""}${esc(l.name)} <b>× ${l.qty}</b>${!l.itemId ? ' <span style="font-size:10.5px; color:var(--text-faint);">(χειροκίνητα)</span>' : ''}</span>
+          <span class="order-line-name">${l.fromPrevious?'<span class="prev-tag">Από προηγούμενη</span> ':''}${l.company ? `<span style="color:var(--flame); font-weight:700;">` + esc(l.company) + `</span> — ` : ""}${esc(l.name)} <b>× ${l.qty}</b>${!l.itemId ? ' <span style="font-size:10.5px; color:var(--text-faint);">(χειροκίνητα)</span>' : ''}</span>
           <button data-remove-selected="${idx}" style="background:none;border:none;color:var(--warn);cursor:pointer;">✕</button>
         </div>`).join("")
       : '<div style="font-size:12.5px; color:var(--text-faint);">Δεν έχεις επιλέξει ακόμα κανένα προϊόν.</div>';
@@ -2815,7 +2830,7 @@ function promptQtyAndAddProduct(orderId, item){
     const qty = Math.max(1, Number(document.getElementById("qtyInput").value) || 1);
     const order = state.orders.find(o=>o.id===orderId);
     const products = (order.products||[]).slice();
-    const existingIdx = products.findIndex(p=>p.itemId===item.id);
+    const existingIdx = products.findIndex(p=>p.itemId===item.id && !p.fromPrevious);
     if(existingIdx >= 0){ products[existingIdx] = {...products[existingIdx], qty: products[existingIdx].qty + qty}; }
     else { products.push({itemId: item.id, code: item.code||"", name: item.name, company: item.brand || item.subName || "", qty}); }
     await updateDoc(doc(state.db, ORDERS_COLLECTION, orderId), {products, updatedAt: new Date().toISOString()});
