@@ -415,21 +415,6 @@ button{font-family:inherit;}
 }
 
 @page{size:A4 portrait; margin:10mm;}
-#printArea{display:none;}
-@media print{
-  body > *:not(#printArea){display:none !important;}
-  html,body{background:#fff !important;}
-  #printArea{display:block !important; width:190mm; color:#000; background:#fff; font-family:Arial,Helvetica,sans-serif; font-size:11px; line-height:1.25;}
-  #printArea .pa-inner{column-count:2; column-gap:8mm; column-fill:balance;}
-  #printArea .order-section{break-inside:avoid; margin:0 0 6px; padding:0; border:0; background:none;}
-  #printArea .order-section h4{font-size:11px; margin:0 0 2px; padding:2px 4px; background:#eee; color:#000; text-transform:uppercase; border:0;}
-  #printArea .order-line{display:flex; gap:6px; padding:1px 4px; border-bottom:1px dotted #999; font-size:11px; color:#000; background:none;}
-  #printArea .order-line-code{min-width:46px; color:#000; font-weight:700;}
-  #printArea .order-line-name{flex:1; color:#000;}
-  #printArea b{color:#000;}
-  #printArea .pa-head{border-bottom:2px solid #000; margin-bottom:6px; padding-bottom:3px;}
-  #printArea *{color:#000 !important; box-shadow:none !important;}
-}
 @media (max-width:640px){
   .card-img{width:70px; height:70px;}
   .content{padding:12px;}
@@ -2407,28 +2392,52 @@ function orderSlipHtml(order){
   `;
 }
 
-/* εκτύπωση σε μία κόλλα Α4: το δελτίο μπαίνει σε 2 στήλες και, αν χρειαστεί, μικραίνει αυτόματα */
+/* εκτύπωση σε μία κόλλα Α4: ξεχωριστό κρυφό iframe, 2 στήλες, αυτόματη σμίκρυνση ώστε να χωράνε ΟΛΑ */
 function printOrder(order){
-  let area = document.getElementById("printArea");
-  if(area) area.remove();
-  area = document.createElement("div");
-  area.id = "printArea";
-  area.innerHTML = '<div class="pa-inner">' + orderSlipHtml(order) + '</div>';
-  document.body.appendChild(area);
-  // μέτρηση: προσωρινά ορατό με το πλάτος της κόλλας
-  area.style.cssText = "display:block;position:absolute;left:-9999px;top:0;width:190mm;font-size:11px;";
-  const inner = area.querySelector(".pa-inner");
-  inner.style.cssText = "column-count:2;column-gap:8mm;";
-  const maxH = 277/25.4*96; // διαθέσιμο ύψος σε px
-  let zoom = 1;
-  for(let i=0;i<30 && inner.scrollHeight*zoom > maxH; i++) zoom -= 0.04;
-  zoom = Math.max(0.4, zoom);
-  area.removeAttribute("style");
-  inner.removeAttribute("style");
-  area.style.zoom = zoom;
-  const done = ()=>{ area.remove(); window.removeEventListener("afterprint", done); };
-  window.addEventListener("afterprint", done);
-  window.print();
+  const old = document.getElementById("printFrame");
+  if(old) old.remove();
+  const fr = document.createElement("iframe");
+  fr.id = "printFrame";
+  fr.style.cssText = "position:fixed;left:-9999px;top:0;width:210mm;height:297mm;border:0;";
+  document.body.appendChild(fr);
+  const d = fr.contentDocument;
+  d.open();
+  d.write(`<!doctype html><html><head><meta charset="utf-8"><title>Δελτίο ${esc(order.storeName||"")}</title>
+<style>
+:root{--border:#999;--text-dim:#000;--text-faint:#000;--flame:#000;}
+@page{size:A4 portrait; margin:10mm;}
+*{box-sizing:border-box; color:#000 !important;}
+html,body{margin:0; padding:0; background:#fff; font-family:Arial,Helvetica,sans-serif; font-size:11px; line-height:1.25;}
+#wrap{transform-origin:top left;}
+#cols{column-count:2; column-gap:8mm;}
+.pa-head{column-span:all; border-bottom:2px solid #000; margin-bottom:6px; padding-bottom:3px;}
+.order-section{break-inside:avoid; margin:0 0 6px;}
+.order-section h4{font-size:11px; margin:0 0 2px; padding:2px 4px; background:#eee; text-transform:uppercase;}
+.order-line{display:flex; gap:6px; padding:1px 4px; border-bottom:1px dotted #999;}
+.order-line-code{min-width:46px; font-weight:700;}
+.order-line-name{flex:1;}
+.prev-tag{border:1px solid #000; font-size:9px; padding:0 3px; border-radius:6px;}
+</style></head><body><div id="clip" style="overflow:hidden;"><div id="wrap"><div id="cols">${orderSlipHtml(order)}</div></div></div></body></html>`);
+  d.close();
+  const run = ()=>{
+    const wrap = d.getElementById("wrap");
+    const pageW = 190/25.4*96, pageH = 277/25.4*96; // διαθέσιμη περιοχή σε px
+    let z = 1;
+    for(let i=0;i<40;i++){
+      wrap.style.width = (pageW/z) + "px";
+      wrap.style.transform = "scale("+z+")";
+      if(wrap.offsetHeight*z <= pageH) break;
+      z -= 0.025;
+      if(z<0.3){ z=0.3; wrap.style.width=(pageW/z)+"px"; wrap.style.transform="scale("+z+")"; break; }
+    }
+    // το scale δεν αλλάζει το layout ύψος -> ορίζουμε ρητά ύψος για να μην βγει δεύτερη σελίδα
+    const clip = d.getElementById("clip");
+    clip.style.height = Math.floor(Math.min(pageH, wrap.offsetHeight*z)) + "px";
+    fr.contentWindow.focus();
+    fr.contentWindow.print();
+    setTimeout(()=>fr.remove(), 60000);
+  };
+  setTimeout(run, 250);
 }
 
 function openOrderSlipModal(orderId){
