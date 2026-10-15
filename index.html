@@ -414,12 +414,21 @@ button{font-family:inherit;}
   box-shadow:0 4px 14px rgba(0,0,0,.35);
 }
 
+@page{size:A4 portrait; margin:10mm;}
+#printArea{display:none;}
 @media print{
-  body *{visibility:hidden;}
-  #printSlip, #printSlip *{visibility:visible;}
-  #printSlip{position:absolute; top:0; left:0; width:100%; color:#000; background:#fff; padding:20px;}
-  #printSlip .order-line-code, #printSlip .order-line-name, #printSlip b{color:#000;}
-  #printSlip .order-section h4{color:#333;}
+  body > *:not(#printArea){display:none !important;}
+  html,body{background:#fff !important;}
+  #printArea{display:block !important; width:190mm; color:#000; background:#fff; font-family:Arial,Helvetica,sans-serif; font-size:11px; line-height:1.25;}
+  #printArea .pa-inner{column-count:2; column-gap:8mm; column-fill:balance;}
+  #printArea .order-section{break-inside:avoid; margin:0 0 6px; padding:0; border:0; background:none;}
+  #printArea .order-section h4{font-size:11px; margin:0 0 2px; padding:2px 4px; background:#eee; color:#000; text-transform:uppercase; border:0;}
+  #printArea .order-line{display:flex; gap:6px; padding:1px 4px; border-bottom:1px dotted #999; font-size:11px; color:#000; background:none;}
+  #printArea .order-line-code{min-width:46px; color:#000; font-weight:700;}
+  #printArea .order-line-name{flex:1; color:#000;}
+  #printArea b{color:#000;}
+  #printArea .pa-head{border-bottom:2px solid #000; margin-bottom:6px; padding-bottom:3px;}
+  #printArea *{color:#000 !important; box-shadow:none !important;}
 }
 @media (max-width:640px){
   .card-img{width:70px; height:70px;}
@@ -2360,7 +2369,7 @@ function orderSlipHtml(order){
     <div class="order-line"><span class="order-line-code">${code?`#${esc(code)}`:""}</span><span class="order-line-name">${esc(name)}</span><b>${qty}</b></div>`;
 
   return `
-    <div style="margin-bottom:10px;">
+    <div class="pa-head" style="margin-bottom:10px; column-span:all;">
       <div style="font-size:20px; font-weight:800; font-family:'Big Shoulders',sans-serif; text-transform:uppercase;">Δελτίο Παραγγελίας</div>
       <div style="font-size:13px; color:var(--text-dim);">${esc(order.storeName)} ${order.createdAt ? "· " + new Date(order.createdAt).toLocaleString("el-GR") : ""}</div>
     </div>
@@ -2398,6 +2407,30 @@ function orderSlipHtml(order){
   `;
 }
 
+/* εκτύπωση σε μία κόλλα Α4: το δελτίο μπαίνει σε 2 στήλες και, αν χρειαστεί, μικραίνει αυτόματα */
+function printOrder(order){
+  let area = document.getElementById("printArea");
+  if(area) area.remove();
+  area = document.createElement("div");
+  area.id = "printArea";
+  area.innerHTML = '<div class="pa-inner">' + orderSlipHtml(order) + '</div>';
+  document.body.appendChild(area);
+  // μέτρηση: προσωρινά ορατό με το πλάτος της κόλλας
+  area.style.cssText = "display:block;position:absolute;left:-9999px;top:0;width:190mm;font-size:11px;";
+  const inner = area.querySelector(".pa-inner");
+  inner.style.cssText = "column-count:2;column-gap:8mm;";
+  const maxH = 277/25.4*96; // διαθέσιμο ύψος σε px
+  let zoom = 1;
+  for(let i=0;i<30 && inner.scrollHeight*zoom > maxH; i++) zoom -= 0.04;
+  zoom = Math.max(0.4, zoom);
+  area.removeAttribute("style");
+  inner.removeAttribute("style");
+  area.style.zoom = zoom;
+  const done = ()=>{ area.remove(); window.removeEventListener("afterprint", done); };
+  window.addEventListener("afterprint", done);
+  window.print();
+}
+
 function openOrderSlipModal(orderId){
   const order = state.orders.find(o=>o.id===orderId);
   if(!order) return;
@@ -2408,7 +2441,7 @@ function openOrderSlipModal(orderId){
       <button class="btn btn-primary" style="width:100%; margin-top:16px;" id="printSlipBtn">🖨️ Εκτύπωση</button>
     </div>
   `);
-  document.getElementById("printSlipBtn").addEventListener("click", ()=>window.print());
+  document.getElementById("printSlipBtn").addEventListener("click", ()=>printOrder(order));
 }
 
 /* ---- store-to-store transfers: after submitting their own order, a
