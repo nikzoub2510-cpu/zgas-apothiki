@@ -503,6 +503,7 @@ const BOTTLE_TYPES = [
   {code:"0003", name:"ΜΕΙΓΜΑ 3 ΚΙΛΩΝ", group:"ΜΕΙΓΜΑ"},
   {code:"0006", name:"ΜΕΙΓΜΑ 6 ΚΙΛΩΝ", group:"ΜΕΙΓΜΑ"},
   {code:"0010", name:"ΜΕΙΓΜΑ 10 ΚΙΛΩΝ", group:"ΜΕΙΓΜΑ"},
+  {code:"0010Ψ", show:"0010", name:"ΜΕΙΓΜΑ 10 ΚΙΛΩΝ ΨΗΛΗ", group:"ΜΕΙΓΜΑ"},
   {code:"0013", name:"ΜΕΙΓΜΑ 13 ΚΙΛΩΝ", group:"ΜΕΙΓΜΑ"},
   {code:"0015", name:"ΜΕΙΓΜΑ 15 ΚΙΛΩΝ", group:"ΜΕΙΓΜΑ"},
   {code:"0025", name:"ΜΕΙΓΜΑ 25 ΚΙΛΩΝ", group:"ΜΕΙΓΜΑ"},
@@ -512,6 +513,7 @@ const BOTTLE_TYPES = [
   {code:"0015Π", name:"ΠΡΟΠΑΝΙΟ 15 ΚΙΛΩΝ", group:"ΠΡΟΠΑΝΙΟ"},
   {code:"0025Π", name:"ΠΡΟΠΑΝΙΟ 25 ΚΙΛΩΝ", group:"ΠΡΟΠΑΝΙΟ"},
 ];
+const bShow = b => b.show || b.code; // κωδικός που εμφανίζεται (το εσωτερικό κλειδί μπορεί να διαφέρει)
 const LS_CONFIG_KEY = "zgas_warehouse_firebase_config";
 const SS_ROLE_KEY = "zgas_warehouse_role";
 const COLLECTION_NAME = "warehouse_items";
@@ -1291,7 +1293,7 @@ function bottleGroupsHtml(cartQty, actionPrefix){
       return `
       <div class="bottle-row has-quick ${isHot?'hot':''}">
         <div class="bottle-row-main">
-          <div class="bottle-title">${isHot?'🔥':''}<span class="order-line-code">#${esc(b.code)}</span><span>${esc(b.name)}</span></div>
+          <div class="bottle-title">${isHot?'🔥':''}<span class="order-line-code">#${esc(bShow(b))}</span><span>${esc(b.name)}</span></div>
           <div class="qty-controls">
             <button class="qty-btn" data-action="${actionPrefix}-dec" data-code="${b.code}">−</button>
             <input type="number" class="qty-input ${v<=0?'zero':''}" min="0" step="1"
@@ -1969,12 +1971,12 @@ function openCompleteOrderModal(orderId){
   const sections = [];
   if(bottleLines.length){
     sections.push(`<h4>Φιάλες καταστήματος</h4>` + bottleLines.map(b=>
-      checkRow(b.name, b.code, b.qty, `data-type="bottle" data-code="${b.code}"`)
+      checkRow(b.name, bShow(b), b.qty, `data-type="bottle" data-code="${b.code}"`)
     ).join(""));
   }
   namedSections.forEach(s=>{
     sections.push(`<h4>Φιάλες — ${esc(s.name)}</h4>` + s.lines.map(b=>
-      checkRow(b.name, b.code, b.qty, `data-type="named" data-client="${esc(s.name)}" data-code="${b.code}"`)
+      checkRow(b.name, bShow(b), b.qty, `data-type="named" data-client="${esc(s.name)}" data-code="${b.code}"`)
     ).join(""));
   });
   if(products.length){
@@ -2128,7 +2130,7 @@ function openBottlesPopup(orderId, editMode){
       const v = Number((order.bottles||{})[b.code] || 0);
       return `
       <div class="bottle-row">
-        <div class="bottle-title"><span class="order-line-code">#${esc(b.code)}</span><span>${esc(b.name)}</span></div>
+        <div class="bottle-title"><span class="order-line-code">#${esc(bShow(b))}</span><span>${esc(b.name)}</span></div>
         <div class="qty-controls">
           <button class="qty-btn" data-action="bottle-dec" data-order="${order.id}" data-code="${b.code}" ${editable?"":"disabled"}>−</button>
           <input type="number" class="qty-input ${v<=0?'zero':''}" min="0" step="1"
@@ -2171,7 +2173,7 @@ function openNamedClientBottlesModal(orderId, clientName){
       return `
       <div class="bottle-row has-quick ${isHot?'hot':''}">
         <div class="bottle-row-main">
-          <div class="bottle-title">${isHot?'🔥':''}<span class="order-line-code">#${esc(b.code)}</span><span>${esc(b.name)}</span></div>
+          <div class="bottle-title">${isHot?'🔥':''}<span class="order-line-code">#${esc(bShow(b))}</span><span>${esc(b.name)}</span></div>
           <div class="qty-controls">
             <button class="qty-btn" data-action="namedcart-bottle-dec" data-code="${b.code}">−</button>
             <input type="number" class="qty-input ${v<=0?'zero':''}" min="0" step="1"
@@ -2362,14 +2364,14 @@ function orderSlipHtml(order){
     ${bottleLines.length ? `
       <div class="order-section">
         <h4>Φιάλες υγραερίου (καταστήματος)</h4>
-        ${bottleLines.map(b=>lineRow(b.code, b.name, b.qty)).join("")}
+        ${bottleLines.map(b=>lineRow(bShow(b), b.name, b.qty)).join("")}
         <div class="order-line" style="border-top:1px solid var(--border); font-weight:700;"><span></span><span>Σύνολο φιαλών</span><b>${bottleTotalQty}</b></div>
       </div>` : ""}
 
     ${namedSections.map(s=>`
       <div class="order-section">
         <h4>Φιάλες — ${esc(s.name)}</h4>
-        ${s.lines.map(b=>lineRow(b.code, b.name, b.qty)).join("")}
+        ${s.lines.map(b=>lineRow(bShow(b), b.name, b.qty)).join("")}
         <div class="order-line" style="border-top:1px solid var(--border); font-weight:700;"><span></span><span>Σύνολο φιαλών ${esc(s.name)}</span><b>${s.total}</b></div>
       </div>`).join("")}
 
