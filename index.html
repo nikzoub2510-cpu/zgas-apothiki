@@ -1875,8 +1875,7 @@ async function createDraftOrder(store){
    by the store that owns it, or by Αποθήκη/Διαχειριστής */
 function canEditOrder(order){
   if(!order) return false;
-  if(isAdmin()) return true; // ο διαχειριστής επεξεργάζεται όλες τις παραγγελίες (και ολοκληρωμένες)
-  if(order.status !== "draft") return false;
+  if(order.status !== "draft") return false; // μόνο ενεργές παραγγελίες (ο διαχειριστής και η Αποθήκη επεξεργάζονται όλες τις ενεργές)
   if(isStoreRole()) return order.store === state.role;
   return state.role === "apothiki" || isAdmin();
 }
@@ -2791,31 +2790,8 @@ function renderOrdersTab(){
           </div>
         </div>
       `;}).join("")}</div>` : emptyStateHtml("Δεν υπάρχουν εκκρεμείς παραγγελίες αυτή τη στιγμή.")}
-      ${isAdmin() ? completedOrdersAdminHtml() : ""}
     `;
   }
-}
-
-/* διαχειριστής: ολοκληρωμένες παραγγελίες (μπορεί να τις ανοίξει και να τις επεξεργαστεί) */
-function completedOrdersAdminHtml(){
-  const done = state.orders.filter(o=>o.status==="completed")
-    .sort((a,b)=>String(b.completedAt||b.createdAt||"").localeCompare(String(a.completedAt||a.createdAt||"")))
-    .slice(0,40);
-  if(!done.length) return "";
-  return `
-    <div class="section-head" style="margin-top:24px;"><h2>Ολοκληρωμένες παραγγελίες</h2></div>
-    <div class="pending-grid">${done.map(o=>`
-      <div class="order-card">
-        <h3 style="cursor:pointer;" data-action="order-open" data-order="${o.id}">${esc(o.storeName)}</h3>
-        <div class="order-meta" style="cursor:pointer;" data-action="order-open" data-order="${o.id}">
-          Ολοκληρώθηκε ${o.completedAt ? new Date(o.completedAt).toLocaleString("el-GR") : ""}
-        </div>
-        <div style="display:flex; gap:6px; margin-top:12px;">
-          <button class="btn btn-ghost" style="flex:1; padding:8px 4px; font-size:12px;" data-action="order-open" data-order="${o.id}">✏️ Επεξεργασία</button>
-          <button class="btn btn-ghost" style="flex:1; padding:8px 4px; font-size:12px;" data-action="open-order-slip" data-order="${o.id}">🖨️ Δελτίο</button>
-          <button class="btn btn-danger" style="flex:1; padding:8px 4px; font-size:12px;" data-action="order-delete" data-order="${o.id}">🗑️</button>
-        </div>
-      </div>`).join("")}</div>`;
 }
 
 /* ---- add product: search existing stock, or enter one manually ---- */
