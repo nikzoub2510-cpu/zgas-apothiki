@@ -1112,6 +1112,7 @@ function onRootClick(e){
   else if(action==="cart-bottle-quick"){ bottleCartQty[el.dataset.code] = Math.max(0, Number(bottleCartQty[el.dataset.code]||0)+Number(el.dataset.amt)); renderBottlesCategoryContent(); }
   else if(action==="cart-bottle-clear"){ bottleCartQty[el.dataset.code] = 0; renderBottlesCategoryContent(); }
   else if(action==="order-add-product"){ openAddOrderProductModal(el.dataset.order); }
+  else if(action==="order-line-qty"){ changeOrderLineQty(el.dataset.order, el.dataset.field, el.dataset.idx, Number(el.dataset.delta)); }
   else if(action==="order-remove-product"){ removeOrderProduct(el.dataset.order, el.dataset.idx); }
   else if(action==="order-add-extinguisher"){ openAddExtinguisherModal(el.dataset.order); }
   else if(action==="order-remove-extinguisher"){ removeOrderExtinguisher(el.dataset.order, el.dataset.idx); }
@@ -1873,7 +1874,9 @@ async function createDraftOrder(store){
 /* an order section is only editable while the order is a draft, and only
    by the store that owns it, or by Αποθήκη/Διαχειριστής */
 function canEditOrder(order){
-  if(!order || order.status !== "draft") return false;
+  if(!order) return false;
+  if(isAdmin()) return true; // ο διαχειριστής επεξεργάζεται όλες τις παραγγελίες (και ολοκληρωμένες)
+  if(order.status !== "draft") return false;
   if(isStoreRole()) return order.store === state.role;
   return state.role === "apothiki" || isAdmin();
 }
@@ -1924,6 +1927,16 @@ async function setNamedClientBottleQty(orderId, clientName, code, value){
   await updateDoc(doc(state.db, ORDERS_COLLECTION, orderId), {namedClientBottles, updatedAt: new Date().toISOString()});
 }
 
+async function changeOrderLineQty(orderId, field, idx, delta){
+  const order = state.orders.find(o=>o.id===orderId);
+  if(!order || !canEditOrder(order)) return;
+  const lines = (order[field]||[]).map(l=>({...l}));
+  const l = lines[Number(idx)];
+  if(!l) return;
+  l.qty = Math.max(1, Number(l.qty||0) + delta);
+  await updateDoc(doc(state.db, ORDERS_COLLECTION, orderId), {[field]: lines, updatedAt: new Date().toISOString()});
+  refreshOpenPopup();
+}
 async function removeOrderProduct(orderId, idx){
   const order = state.orders.find(o=>o.id===orderId);
   if(!order) return;
@@ -2232,7 +2245,7 @@ function openProductsPopup(orderId){
     <div class="order-line">
       <span class="order-line-code">#${esc(l.code||"")}</span>
       <span class="order-line-name">${l.fromPrevious?'<span class="prev-tag">Από προηγούμενη</span> ':''}${l.company ? `<span style="color:var(--flame); font-weight:700;">` + esc(l.company) + `</span> — ` : ""}${esc(l.name)} <b>× ${l.qty}</b>${!l.itemId ? ' <span style="font-size:10.5px; color:var(--text-faint);">(χειροκίνητα)</span>' : ''}</span>
-      ${editable ? `<button data-action="order-remove-product" data-order="${order.id}" data-idx="${idx}" style="background:none;border:none;color:var(--warn);cursor:pointer;">✕</button>` : ""}
+      ${editable ? `<span class="qty-controls" style="margin-left:6px;"><button class="qty-btn" data-action="order-line-qty" data-order="${order.id}" data-field="products" data-idx="${idx}" data-delta="-1">−</button><button class="qty-btn" data-action="order-line-qty" data-order="${order.id}" data-field="products" data-idx="${idx}" data-delta="1">+</button></span><button data-action="order-remove-product" data-order="${order.id}" data-idx="${idx}" style="background:none;border:none;color:var(--warn);cursor:pointer;">✕</button>` : ""}
     </div>`).join("");
 
   showModal(`
@@ -2257,7 +2270,7 @@ function openExtinguishersPopup(orderId, editMode){
   const rows = lines.map((l,idx)=>`
     <div class="order-line">
       <span class="order-line-name">${esc(l.customerName||l.name||"")} <b>× ${l.qty}</b>${l.notes ? ` <span style="color:var(--text-faint); font-style:italic;">— ${esc(l.notes)}</span>` : ""}</span>
-      ${editable ? `<button data-action="order-remove-extinguisher" data-order="${order.id}" data-idx="${idx}" style="background:none;border:none;color:var(--warn);cursor:pointer;">✕</button>` : ""}
+      ${editable ? `<span class="qty-controls" style="margin-left:6px;"><button class="qty-btn" data-action="order-line-qty" data-order="${order.id}" data-field="extinguishers" data-idx="${idx}" data-delta="-1">−</button><button class="qty-btn" data-action="order-line-qty" data-order="${order.id}" data-field="extinguishers" data-idx="${idx}" data-delta="1">+</button></span><button data-action="order-remove-extinguisher" data-order="${order.id}" data-idx="${idx}" style="background:none;border:none;color:var(--warn);cursor:pointer;">✕</button>` : ""}
     </div>`).join("");
 
   showModal(`
@@ -2778,8 +2791,31 @@ function renderOrdersTab(){
           </div>
         </div>
       `;}).join("")}</div>` : emptyStateHtml("Δεν υπάρχουν εκκρεμείς παραγγελίες αυτή τη στιγμή.")}
+      ${isAdmin() ? completedOrdersAdminHtml() : ""}
     `;
   }
+}
+
+/* διαχειριστής: ολοκληρωμένες παραγγελίες (μπορεί να τις ανοίξει και να τις επεξεργαστεί) */
+function completedOrdersAdminHtml(){
+  const done = state.orders.filter(o=>o.status==="completed")
+    .sort((a,b)=>String(b.completedAt||b.createdAt||"").localeCompare(String(a.completedAt||a.createdAt||"")))
+    .slice(0,40);
+  if(!done.length) return "";
+  return `
+    <div class="section-head" style="margin-top:24px;"><h2>Ολοκληρωμένες παραγγελίες</h2></div>
+    <div class="pending-grid">${done.map(o=>`
+      <div class="order-card">
+        <h3 style="cursor:pointer;" data-action="order-open" data-order="${o.id}">${esc(o.storeName)}</h3>
+        <div class="order-meta" style="cursor:pointer;" data-action="order-open" data-order="${o.id}">
+          Ολοκληρώθηκε ${o.completedAt ? new Date(o.completedAt).toLocaleString("el-GR") : ""}
+        </div>
+        <div style="display:flex; gap:6px; margin-top:12px;">
+          <button class="btn btn-ghost" style="flex:1; padding:8px 4px; font-size:12px;" data-action="order-open" data-order="${o.id}">✏️ Επεξεργασία</button>
+          <button class="btn btn-ghost" style="flex:1; padding:8px 4px; font-size:12px;" data-action="open-order-slip" data-order="${o.id}">🖨️ Δελτίο</button>
+          <button class="btn btn-danger" style="flex:1; padding:8px 4px; font-size:12px;" data-action="order-delete" data-order="${o.id}">🗑️</button>
+        </div>
+      </div>`).join("")}</div>`;
 }
 
 /* ---- add product: search existing stock, or enter one manually ---- */
