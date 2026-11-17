@@ -495,9 +495,10 @@ const ROLES = [
   {id:"xania", name:"ΧΑΝΙΑ", pin:"155"},
   {id:"rethymno", name:"ΡΕΘΥΜΝΟ", pin:"4925"},
   {id:"apothiki", name:"ΑΠΟΘΗΚΗ", pin:"110"},
+  {id:"fortigo", name:"ΦΟΡΤΗΓΟ", pin:"685"},
   {id:"admin", name:"ΔΙΑΧΕΙΡΙΣΤΗΣ", pin:"2510"},
 ];
-const STORE_ROLES = ["xania","rethymno"];
+const STORE_ROLES = ["xania","rethymno","fortigo"];
 const BOTTLE_TYPES = [
   {code:"0002", name:"ΜΕΙΓΜΑ 2 ΚΙΛΩΝ", group:"ΜΕΙΓΜΑ"},
   {code:"0003", name:"ΜΕΙΓΜΑ 3 ΚΙΛΩΝ", group:"ΜΕΙΓΜΑ"},
@@ -521,6 +522,7 @@ const ORDERS_COLLECTION = "warehouse_orders";
 const TRANSFER_NOTES_COLLECTION = "warehouse_transfer_notes";
 
 function isAdmin(){ return state.role === "admin"; }
+function isProductsOnly(){ return state.role === "fortigo"; } // ο ΦΟΡΤΗΓΟΣ παραγγέλνει προϊόντα αποθήκης και πυροσβεστήρες (όχι φιάλες)
 function isStoreRole(){ return STORE_ROLES.includes(state.role); }
 function roleName(id){ const r = ROLES.find(r=>r.id===id); return r ? r.name : id; }
 /* the field in `quantities` that represents central-warehouse stock for a
@@ -1219,7 +1221,7 @@ function update(){
   }
 
   document.getElementById("catRail").innerHTML =
-    (isStoreRole() ? `<button class="cat-chip bottles-chip ${state.activeCat==='__bottles__'?'active':''}" data-action="cat" data-cat="__bottles__">🛢️ ΦΙΑΛΕΣ</button>` : "")
+    (isStoreRole() && !isProductsOnly() ? `<button class="cat-chip bottles-chip ${state.activeCat==='__bottles__'?'active':''}" data-action="cat" data-cat="__bottles__">🛢️ ΦΙΑΛΕΣ</button>` : "")
     + cats.map(c=>catChipHtml(c, c.id===state.activeCat)).join("")
     + (isAdmin() ? `<button class="cat-chip" data-action="add-cat" style="border-style:dashed;">+ νέα κατηγορία</button>` : "");
 
@@ -2318,9 +2320,9 @@ function orderTilesHtml(order, opts){
         ${extra>0 ? `<div style="color:var(--text-faint); font-style:italic;">+${extra} ακόμα…</div>` : ""}
       </div>` : `<div style="font-size:12.5px; color:var(--text-faint); border-top:1px dashed var(--border); padding-top:8px; margin-top:6px;">Δεν έχεις προσθέσει τίποτα ακόμα.</div>`}
       <div style="display:flex; flex-direction:column; gap:8px; margin-top:14px;">
-        <button class="add-btn" style="justify-content:space-between; display:flex;" data-action="open-bottles-popup" data-order="${order.id}">
+        ${order.store==="fortigo" ? "" : `<button class="add-btn" style="justify-content:space-between; display:flex;" data-action="open-bottles-popup" data-order="${order.id}">
           <span>🛢️ Φιάλες υγραερίου (καταστήματος)</span><span>${bTotal>0?bTotal:""}</span>
-        </button>
+        </button>`}
         ${clients.map(name=>{
           const total = namedClientBottleTotal(order, name);
           return `<button class="add-btn" style="justify-content:space-between; display:flex;" data-action="open-named-client" data-order="${order.id}" data-client="${esc(name)}">
@@ -2570,7 +2572,7 @@ function openCartModal(){
     cartBottles = {};
     cartNamedBottles = {};
     updateCartFab();
-    openTransferAskModal(state.role);
+    if(isProductsOnly()){ closeModal(); alert("Η παραγγελία καταχωρήθηκε ✓"); } else openTransferAskModal(state.role);
   });
 }
 
@@ -2715,7 +2717,7 @@ function renderOrdersTab(){
       </div>
     ` : "";
 
-    const transferBtnHtml = `<button class="btn btn-ghost" style="width:100%; margin:14px 0;" data-action="open-transfer-direct">↔️ Αποστολή σε άλλο κατάστημα</button>`;
+    const transferBtnHtml = isProductsOnly() ? "" : `<button class="btn btn-ghost" style="width:100%; margin:14px 0;" data-action="open-transfer-direct">↔️ Αποστολή σε άλλο κατάστημα</button>`;
 
     if(!order){
       content.innerHTML = `
