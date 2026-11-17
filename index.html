@@ -328,11 +328,12 @@ button{font-family:inherit;}
   margin:0 0 16px; letter-spacing:.02em;
 }
 .modal label{display:block; font-size:11.5px; color:var(--text-dim); font-weight:600; margin:12px 0 5px; text-transform:uppercase; letter-spacing:.03em;}
-.modal input[type=text], .modal input[type=number], .modal textarea{
+.modal input[type=text], .modal input[type=number], .modal input[type=tel], .modal select, .modal textarea{
   width:100%; background:var(--surface); border:1px solid var(--border); color:var(--text);
   padding:10px 12px; border-radius:8px; font-size:14px; font-family:inherit;
 }
 .modal textarea{resize:vertical; min-height:60px;}
+.modal input[type=checkbox]{width:auto !important;}
 .modal input.qty-input{
   width:32px !important; padding:0 !important; text-align:center; border-radius:6px;
 }
@@ -496,6 +497,8 @@ const ROLES = [
   {id:"rethymno", name:"ΡΕΘΥΜΝΟ", pin:"4925"},
   {id:"apothiki", name:"ΑΠΟΘΗΚΗ", pin:"110"},
   {id:"fortigo", name:"ΦΟΡΤΗΓΟ", pin:"685"},
+  {id:"pyro_wh", name:"ΠΥΡΟΣΒΕΣΤΗΡΕΣ ΑΠΟΘΗΚΗΣ", pin:"110"},
+  {id:"pyro_shop", name:"ΠΥΡΟΣΒΕΣΤΗΡΕΣ ΚΑΤΑΣΤΗΜΑΤΟΣ", pin:"120"},
   {id:"admin", name:"ΔΙΑΧΕΙΡΙΣΤΗΣ", pin:"2510"},
 ];
 const STORE_ROLES = ["xania","rethymno","fortigo"];
@@ -520,7 +523,10 @@ const SS_ROLE_KEY = "zgas_warehouse_role";
 const COLLECTION_NAME = "warehouse_items";
 const ORDERS_COLLECTION = "warehouse_orders";
 const TRANSFER_NOTES_COLLECTION = "warehouse_transfer_notes";
+const REFILLS_COLLECTION = "warehouse_refills";
 
+function isPyro(){ return state.role === "pyro_wh" || state.role === "pyro_shop"; }
+function pyroLab(){ return state.role === "pyro_wh" ? "warehouse" : "shop"; } // το αναγομωτήριο του χρήστη
 function isAdmin(){ return state.role === "admin"; }
 function isProductsOnly(){ return state.role === "fortigo"; } // ο ΦΟΡΤΗΓΟΣ παραγγέλνει προϊόντα αποθήκης και πυροσβεστήρες (όχι φιάλες)
 function isStoreRole(){ return STORE_ROLES.includes(state.role); }
@@ -540,6 +546,7 @@ let state = {
   items: [],
   orders: [],
   transferNotes: [],
+  refills: [],
   loaded: false,
   ordersLoaded: false,
   activeTab: "inventory",
@@ -547,7 +554,7 @@ let state = {
   activeSub: null,
   activeSub2: "",
   search: "",
-  role: sessionStorage.getItem(SS_ROLE_KEY) || null,
+  role: (r=>r==="pyro"?null:r)(sessionStorage.getItem(SS_ROLE_KEY)) || null,
   db: null,
   connError: null,
 };
@@ -625,6 +632,7 @@ function loadFirebase(){
     attachListener();
     attachOrdersListener();
     attachTransferNotesListener();
+    attachRefillsListener();
     renderGate();
   }catch(e){
     renderSetup("Σφάλμα σύνδεσης: " + e.message);
@@ -1106,6 +1114,15 @@ function onRootClick(e){
   else if(action==="add-cat"){ openAddCategoryModal(); }
   else if(action==="seed"){ if(isAdmin()) seedDatabase(); }
   else if(action==="close-modal"){ closeModal(); }
+  else if(action==="refill-new"){ openRefillModal(null); }
+  else if(action==="refill-edit"){ openRefillModal(el.dataset.id); }
+  else if(action==="refill-next"){ moveRefill(el.dataset.id, +1); }
+  else if(action==="refill-prev"){ moveRefill(el.dataset.id, -1); }
+  else if(action==="refill-delete"){ deleteRefill(el.dataset.id); }
+  else if(action==="refill-task"){ toggleRefillTask(el.dataset.id, Number(el.dataset.idx)); }
+  else if(action==="refill-notify"){ toggleRefillNotified(el.dataset.id); }
+  else if(action==="refill-lab-filter"){ refillLabFilter = el.dataset.f; renderRefillTab(); }
+  else if(action==="refill-filter"){ refillFilter = el.dataset.f; renderRefillTab(); }
   else if(action==="tab"){ state.activeTab = el.dataset.tab; update(); }
   else if(action==="bottle-inc"){ changeOrderBottleQty(el.dataset.order, el.dataset.code, +1); }
   else if(action==="bottle-dec"){ changeOrderBottleQty(el.dataset.order, el.dataset.code, -1); }
@@ -1164,18 +1181,335 @@ function updateStatus(){
   roleBtn.innerHTML = `${isAdmin() ? "🔓" : "👤"} ${esc(roleName(state.role))} <span style="opacity:.6; font-size:11px;">⇄</span>`;
 
   const pendingCount = state.role === "apothiki" ? state.orders.filter(o=>o.status==="draft").length : 0;
-  const tabs = [{id:"inventory", label:"Αποθήκη"}];
+  let tabs = [{id:"inventory", label:"Αποθήκη"}];
   if(state.role !== null) tabs.push({id:"orders", label:"Παραγγελίες"});
+  if(isAdmin() || isStoreRole()) tabs.push({id:"refill", label:"🧯 Αναγόμωση"});
+  if(isPyro()) tabs = [{id:"refill", label:"🧯 Αναγόμωση"}];
   document.getElementById("tabNav").innerHTML = tabs.map(t=>
     `<button class="tab-btn ${state.activeTab===t.id?'active':''}" data-action="tab" data-tab="${t.id}">${t.label}${t.id==="orders" && pendingCount>0 ? `<span class="notif-badge">${pendingCount}</span>` : ""}</button>`
   ).join("");
 }
 
+/* ============ ΑΝΑΓΟΜΩΣΗ ΠΥΡΟΣΒΕΣΤΗΡΩΝ ============
+   Χανιά / Ρέθυμνο / Φορτηγό (και διαχειριστής) δημιουργούν καρτέλα ανά πελάτη.
+   Ο χρήστης ΠΥΡΟΣΒΕΣΤΗΡΕΣ (αναγομωτήριο) ενημερώνει τις καρτέλες: εργασίες, στάδιο, έτοιμος. */
+const REFILL_STATUSES = [
+  {id:"received",   label:"Παραλαβή",     nextLabel:"▶ Σε εξέλιξη"},
+  {id:"inprogress", label:"Σε εξέλιξη",   nextLabel:"✓ Έτοιμος"},
+  {id:"ready",      label:"Έτοιμος",      nextLabel:"📦 Παραδόθηκε"},
+  {id:"delivered",  label:"Παραδόθηκε",   nextLabel:""},
+];
+const REFILL_LABS = [
+  {id:"shop",      label:"Καταστήματος"},
+  {id:"warehouse", label:"Αποθήκης"},
+];
+const REFILL_INTAKE = [
+  {id:"customer", label:"Ο πελάτης το παρέδωσε σε εμάς"},
+  {id:"pickup",   label:"Το παραλάβαμε εμείς από τον πελάτη"},
+];
+const REFILL_DELIVERY = [
+  {id:"store",   label:"Θα το παραλάβει ο πελάτης από το κατάστημα"},
+  {id:"deliver", label:"Θα τον πάμε εμείς στον πελάτη"},
+];
+const REFILL_TASKS = ["Αναγόμωση","Έλεγχος / δοκιμή πίεσης","Υδραυλική δοκιμή","Αντικατάσταση μανόμετρου","Αντικατάσταση βαλβίδας","Αντικατάσταση σωλήνα / ακροφυσίου","Βάψιμο","Νέα ετικέτα / σφράγιση"];
+const REFILL_TYPES = ["Ξηρή σκόνη ABC","Ξηρή σκόνη BC","CO2","Αφρού","Νερού","Λεπτού νερού","Άλλο"];
+const REFILL_SIZES = ["1","2","3","4","5","6","9","12","25","50"];
+let refillFilter = "active";
+let refillLabFilter = "all";
+let refillSearch = "";
+
+function isRefillWorker(){ return isPyro() || isAdmin(); }      // κάνει τις εργασίες
+function canUseRefills(){ return isRefillWorker() || isStoreRole(); }        // ανοίγει την καρτέλα
+function refillStatus(id){ return REFILL_STATUSES.find(s=>s.id===id) || REFILL_STATUSES[0]; }
+function labName(id){ const l = REFILL_LABS.find(x=>x.id===id); return l ? l.label : ""; }
+function optLabel(list,id){ const o = list.find(x=>x.id===id); return o ? o.label : ""; }
+function fmtDate(iso){ return iso ? new Date(iso).toLocaleDateString("el-GR") : ""; }
+function refillLines(r){
+  if(Array.isArray(r.lines) && r.lines.length) return r.lines;
+  return r.type ? [{type:r.type, size:r.size||"", qty:Number(r.qty||1)}] : []; // παλιές καρτέλες
+}
+function refillTotalQty(r){ return refillLines(r).reduce((a,l)=>a+Number(l.qty||0),0); }
+function isMyRefill(r){ return r.createdBy === state.role; }
+function canEditRefillInfo(r){ return isRefillWorker() || (isMyRefill(r) && r.status==="received"); }
+function canDeleteRefill(r){ return isRefillWorker() || (isMyRefill(r) && r.status==="received"); }
+function canNotifyRefill(r){ return isRefillWorker() || isMyRefill(r); }
+
+function attachRefillsListener(){
+  const colRef = collection(state.db, REFILLS_COLLECTION);
+  onSnapshot(colRef, snap=>{
+    state.refills = snap.docs.map(d=>({id:d.id, ...d.data()}));
+    update();
+  }, err=>{ console.error("refills listener error", err); });
+}
+
+function visibleRefills(){
+  // οι εργαζόμενοι αναγόμωσης/διαχειριστής βλέπουν όλα· τα καταστήματα μόνο τις δικές τους καρτέλες
+  if(isAdmin()) return state.refills;
+  if(isPyro()) return state.refills.filter(r=>r.lab === pyroLab()); // μόνο το δικό του αναγομωτήριο
+  return state.refills.filter(isMyRefill);
+}
+
+function filteredRefills(){
+  const q = refillSearch.trim().toLowerCase();
+  return visibleRefills().filter(r=>{
+    if(refillFilter==="active" && r.status==="delivered") return false;
+    if(refillFilter!=="active" && refillFilter!=="all" && r.status!==refillFilter) return false;
+    if(refillLabFilter!=="all" && r.lab!==refillLabFilter) return false;
+    if(q){
+      const hay = `${r.customer||""} ${r.phone||""} ${refillLines(r).map(l=>l.type).join(" ")} ${r.notes||""} ${r.receivedBy||""}`.toLowerCase();
+      if(!hay.includes(q)) return false;
+    }
+    return true;
+  }).sort((a,b)=>{
+    if((a.status==="delivered") !== (b.status==="delivered")) return a.status==="delivered" ? 1 : -1;
+    if(a.status==="delivered") return String(b.deliveredAt||"").localeCompare(String(a.deliveredAt||""));
+    return String(a.receivedAt||"").localeCompare(String(b.receivedAt||""));
+  });
+}
+
+function refillCardHtml(r){
+  const st = refillStatus(r.status);
+  const lines = refillLines(r);
+  const tasks = r.tasks || [];
+  const worker = isRefillWorker();
+  const stColor = r.status==="ready" ? "background:#111;color:#FFD400;" : r.status==="delivered" ? "background:#ddd;color:#555;" : "background:#FFD400;color:#111;border:1px solid #111;";
+  const prev = REFILL_STATUSES[REFILL_STATUSES.findIndex(s=>s.id===r.status)-1];
+  const isReady = r.status==="ready" || r.status==="delivered";
+  const pill = (txt, on)=>`<span style="display:inline-block; font-size:11px; font-weight:700; padding:2px 8px; border-radius:999px; border:1px solid #111; ${on ? "background:#111;color:#FFD400;" : "background:#fff;color:#111;"}">${txt}</span>`;
+  return `
+  <div class="order-card" style="${r.status==="delivered" ? "opacity:.65;" : ""}">
+    <div style="display:flex; justify-content:space-between; gap:8px; align-items:flex-start;">
+      <h3 style="margin:0;">${esc(r.customer||"—")}</h3>
+      <span style="${stColor} font-size:11px; font-weight:800; padding:3px 9px; border-radius:999px; white-space:nowrap;">${esc(st.label)}</span>
+    </div>
+    ${r.phone ? `<div style="margin-top:4px;"><a href="tel:${esc(r.phone)}" style="color:inherit; font-weight:700;">📞 ${esc(r.phone)}</a></div>` : ""}
+    <div style="margin-top:6px; font-size:12px; color:var(--text-dim);">
+      Από: <b>${esc(r.createdByName||roleName(r.createdBy)||"—")}</b> · Αναγομωτήριο: <b>${esc(labName(r.lab)||"—")}</b>
+    </div>
+    <div style="margin-top:8px; font-size:14px;">
+      ${lines.map(l=>`<div><b>${Number(l.qty||1)} ×</b> ${esc(l.type||"")}${l.size ? " " + esc(l.size) + "kg" : ""}</div>`).join("")}
+      <div style="font-size:12px; color:var(--text-dim); margin-top:2px;">Σύνολο: ${refillTotalQty(r)} τεμ.</div>
+    </div>
+    <div style="margin-top:8px; font-size:12px; color:var(--text-dim); line-height:1.5;">
+      ${r.intake ? `⬇ ${esc(optLabel(REFILL_INTAKE,r.intake))}<br>` : ""}
+      ${r.receivedBy ? `👤 Παρέλαβε: <b>${esc(r.receivedBy)}</b><br>` : ""}
+      ${r.delivery ? `⬆ ${esc(optLabel(REFILL_DELIVERY,r.delivery))}` : ""}
+    </div>
+    ${tasks.length ? `<div style="display:flex; flex-wrap:wrap; gap:5px; margin-top:8px;">
+      ${tasks.map((t,i)=> worker
+        ? `<button data-action="refill-task" data-id="${r.id}" data-idx="${i}" style="border:1px solid #111; border-radius:999px; padding:2px 9px; font-size:11.5px; cursor:pointer; ${t.done ? "background:#111;color:#FFD400;" : "background:#fff;color:#111;"}">${t.done ? "✓ " : ""}${esc(t.name)}</button>`
+        : `<span style="border:1px solid #111; border-radius:999px; padding:2px 9px; font-size:11.5px; ${t.done ? "background:#111;color:#FFD400;" : "background:#fff;color:#111;"}">${t.done ? "✓ " : ""}${esc(t.name)}</span>`
+      ).join("")}
+    </div>` : ""}
+    ${r.notes ? `<div style="margin-top:8px; font-size:12.5px; font-style:italic; color:var(--text-dim);">${esc(r.notes)}</div>` : ""}
+    <div style="display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; align-items:center;">
+      ${pill(isReady ? "Έτοιμοι: ΝΑΙ" : "Έτοιμοι: ΟΧΙ", isReady)}
+      ${isReady ? (canNotifyRefill(r)
+        ? `<button data-action="refill-notify" data-id="${r.id}" style="cursor:pointer; border:1px solid #111; border-radius:999px; padding:2px 10px; font-size:11px; font-weight:700; ${r.notified ? "background:#111;color:#FFD400;" : "background:#fff;color:#111;"}">${r.notified ? "✓ Ενημερώθηκε ο πελάτης" + (r.notifiedAt ? " ("+fmtDate(r.notifiedAt)+")" : "") : "Δεν έχει ενημερωθεί — πάτα όταν ενημερωθεί"}</button>`
+        : pill(r.notified ? "✓ Ενημερώθηκε" : "Δεν έχει ενημερωθεί", !!r.notified)) : ""}
+    </div>
+    <div style="margin-top:8px; font-size:11.5px; color:var(--text-faint);">
+      Παραλαβή: ${fmtDate(r.receivedAt)}${r.readyAt ? " · Έτοιμοι: " + fmtDate(r.readyAt) : ""}${r.deliveredAt ? " · Παράδοση: " + fmtDate(r.deliveredAt) : ""}
+    </div>
+    <div style="display:flex; gap:6px; margin-top:12px;">
+      ${worker && r.status!=="delivered" ? `<button class="btn btn-primary" style="flex:2; padding:9px 6px; font-size:13px;" data-action="refill-next" data-id="${r.id}">${st.nextLabel}</button>` : ""}
+      ${worker && prev ? `<button class="btn btn-ghost" style="flex:none; padding:9px 12px;" title="Πίσω στο «${prev.label}»" data-action="refill-prev" data-id="${r.id}">↩</button>` : ""}
+      ${canEditRefillInfo(r) ? `<button class="btn btn-ghost" style="flex:none; padding:9px 12px;" data-action="refill-edit" data-id="${r.id}">✏️</button>` : ""}
+      ${canDeleteRefill(r) ? `<button class="btn btn-danger" style="flex:none; padding:9px 12px;" data-action="refill-delete" data-id="${r.id}">🗑️</button>` : ""}
+    </div>
+  </div>`;
+}
+
+function renderRefillGrid(){
+  const grid = document.getElementById("refillGrid");
+  if(!grid) return;
+  const list = filteredRefills();
+  grid.innerHTML = list.length ? list.map(refillCardHtml).join("") : emptyStateHtml("Δεν υπάρχουν πυροσβεστήρες σε αυτή την προβολή.");
+}
+
+function renderRefillTab(){
+  const content = document.getElementById("content");
+  if(!canUseRefills()){ content.innerHTML = emptyStateHtml("Δεν έχεις πρόσβαση."); return; }
+  const mine = visibleRefills();
+  const count = id => mine.filter(r=>r.status===id).length;
+  const activeCount = mine.filter(r=>r.status!=="delivered").length;
+  const chip = (id,label,n)=>`<button class="cat-chip ${refillFilter===id?"active":""}" data-action="refill-filter" data-f="${id}">${label}${n!=null?` (${n})`:""}</button>`;
+  const labChip = (id,label)=>`<button class="cat-chip ${refillLabFilter===id?"active":""}" data-action="refill-lab-filter" data-f="${id}">${label}</button>`;
+  content.innerHTML = `
+    <div class="section-head"><h2>🧯 Αναγόμωση πυροσβεστήρων</h2>
+      <button class="add-btn" data-action="refill-new">+ Νέα καρτέλα πελάτη</button></div>
+    <div style="display:flex; flex-wrap:wrap; gap:6px; margin:10px 0 6px;">
+      ${chip("active","Ενεργοί",activeCount)}
+      ${REFILL_STATUSES.map(s=>chip(s.id,s.label,count(s.id))).join("")}
+      ${chip("all","Όλοι",mine.length)}
+    </div>
+    ${isAdmin() ? `<div style="display:flex; flex-wrap:wrap; gap:6px; margin:0 0 10px;">
+      ${labChip("all","Όλα τα αναγομωτήρια")}
+      ${REFILL_LABS.map(l=>labChip(l.id,l.label)).join("")}
+    </div>` : (isPyro() ? `<div style="margin:0 0 10px; font-size:13px; font-weight:700;">Αναγομωτήριο ${esc(labName(pyroLab()))}</div>` : "")}
+    <input id="refillSearchInput" type="search" placeholder="Αναζήτηση πελάτη / τηλεφώνου…" value="${esc(refillSearch)}" style="width:100%; margin-bottom:12px; padding:10px 12px; border-radius:10px; border:1px solid var(--border); font-size:14px;">
+    <div class="pending-grid" id="refillGrid"></div>
+  `;
+  renderRefillGrid();
+  document.getElementById("refillSearchInput").addEventListener("input", e=>{ refillSearch = e.target.value; renderRefillGrid(); });
+}
+
+function refillLineRowHtml(l){
+  l = l || {type:REFILL_TYPES[0], size:"", qty:1};
+  return `<div class="rf-line" style="display:flex; gap:6px; align-items:center; margin-bottom:6px;">
+    <select class="rf-l-type" style="flex:2; min-width:0;">${REFILL_TYPES.map(t=>`<option ${l.type===t?"selected":""}>${t}</option>`).join("")}</select>
+    <input class="rf-l-size" type="text" list="rf_sizes" placeholder="kg" value="${esc(l.size||"")}" style="flex:1; min-width:0;" autocomplete="off">
+    <input class="rf-l-qty" type="number" min="1" value="${Number(l.qty||1)}" style="flex:1; min-width:0;">
+    <button type="button" class="rf-l-del" style="background:none;border:none;color:var(--warn);cursor:pointer;font-size:16px;">✕</button>
+  </div>`;
+}
+
+function openRefillModal(id){
+  const r = id ? state.refills.find(x=>x.id===id) : null;
+  if(r && !canEditRefillInfo(r)) return;
+  const worker = isRefillWorker();
+  const chosen = new Set((r?.tasks||[]).map(t=>t.name));
+  const extraTasks = (r?.tasks||[]).filter(t=>!REFILL_TASKS.includes(t.name)).map(t=>t.name).join(", ");
+  const lines = r ? refillLines(r) : [null];
+  const sel = (idn, list, cur, withEmpty)=>`<select id="${idn}" style="width:100%;">${withEmpty?'<option value="">—</option>':""}${list.map(o=>`<option value="${o.id}" ${cur===o.id?"selected":""}>${esc(o.label)}</option>`).join("")}</select>`;
+  showModal(`
+    <div class="modal" style="position:relative; max-width:480px;">
+      <button class="close-x" data-action="close-modal">✕</button>
+      <h3>${r ? "Επεξεργασία καρτέλας" : "Νέα καρτέλα πελάτη"}</h3>
+      <label>Όνομα πελάτη</label>
+      <input id="rf_customer" type="text" value="${esc(r?.customer||"")}" autocomplete="off">
+      <label>Τηλέφωνο</label>
+      <input id="rf_phone" type="tel" value="${esc(r?.phone||"")}" autocomplete="off">
+      <label>Πυροσβεστήρες (τύπος · kg · τεμάχια)</label>
+      <div id="rf_lines">${lines.map(refillLineRowHtml).join("")}</div>
+      <datalist id="rf_sizes">${REFILL_SIZES.map(s=>`<option value="${s}">`).join("")}</datalist>
+      <button type="button" class="add-btn" id="rf_addline" style="width:100%; margin-top:2px;">+ Άλλος τύπος / μέγεθος</button>
+      <label>Αναγομωτήριο</label>
+      ${isPyro() ? `<input type="hidden" id="rf_lab" value="${pyroLab()}"><div style="font-size:14px; font-weight:700;">${esc(labName(pyroLab()))}</div>` : sel("rf_lab", REFILL_LABS, r?.lab || "shop", false)}
+      <label>Πώς παραλήφθηκαν</label>
+      ${sel("rf_intake", REFILL_INTAKE, r?.intake, true)}
+      <label>Ποιος εργαζόμενος τους παρέλαβε</label>
+      <input id="rf_by" type="text" value="${esc(r?.receivedBy||"")}" autocomplete="off">
+      <label>Πώς θα παραδοθούν μετά</label>
+      ${sel("rf_delivery", REFILL_DELIVERY, r?.delivery, true)}
+      ${worker ? `
+      <label>Εργασίες συντήρησης</label>
+      <div id="rf_tasks" style="display:flex; flex-direction:column; gap:5px; margin-bottom:6px;">
+        ${REFILL_TASKS.map(t=>`<label style="display:flex; gap:8px; align-items:center; font-size:14px; text-transform:none; letter-spacing:0; margin:0; font-weight:400; color:var(--text);"><input type="checkbox" value="${esc(t)}" ${chosen.has(t)?"checked":""}> ${esc(t)}</label>`).join("")}
+      </div>
+      <input id="rf_extra" type="text" placeholder="Άλλες εργασίες (χωρισμένες με κόμμα)" value="${esc(extraTasks)}" autocomplete="off">` : ""}
+      <label>Σημειώσεις</label>
+      <textarea id="rf_notes" rows="2">${esc(r?.notes||"")}</textarea>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" data-action="close-modal">Άκυρο</button>
+        <button class="btn btn-primary" id="rfSaveBtn">${r ? "Αποθήκευση" : "Καταχώρηση"}</button>
+      </div>
+    </div>`);
+  const linesBox = document.getElementById("rf_lines");
+  linesBox.addEventListener("click", e=>{
+    const del = e.target.closest(".rf-l-del");
+    if(del && linesBox.querySelectorAll(".rf-line").length > 1) del.closest(".rf-line").remove();
+  });
+  document.getElementById("rf_addline").addEventListener("click", ()=>{
+    linesBox.insertAdjacentHTML("beforeend", refillLineRowHtml(null));
+  });
+  document.getElementById("rfSaveBtn").addEventListener("click", async ()=>{
+    const customer = document.getElementById("rf_customer").value.trim();
+    const phone = document.getElementById("rf_phone").value.trim();
+    if(!customer){ alert("Συμπλήρωσε το όνομα του πελάτη."); return; }
+    if(!phone){ alert("Συμπλήρωσε το τηλέφωνο του πελάτη."); return; }
+    const newLines = Array.from(document.querySelectorAll("#rf_lines .rf-line")).map(row=>({
+      type: row.querySelector(".rf-l-type").value,
+      size: row.querySelector(".rf-l-size").value.trim(),
+      qty: Math.max(1, Math.round(Number(row.querySelector(".rf-l-qty").value))||1),
+    }));
+    const now = new Date().toISOString();
+    const data = {
+      customer, phone, lines: newLines,
+      lab: document.getElementById("rf_lab").value,
+      intake: document.getElementById("rf_intake").value,
+      receivedBy: document.getElementById("rf_by").value.trim(),
+      delivery: document.getElementById("rf_delivery").value,
+      notes: document.getElementById("rf_notes").value.trim(),
+      updatedAt: now,
+    };
+    if(worker){
+      const prevDone = new Map((r?.tasks||[]).map(t=>[t.name, !!t.done]));
+      const names = Array.from(document.querySelectorAll("#rf_tasks input:checked")).map(i=>i.value);
+      document.getElementById("rf_extra").value.split(",").map(x=>x.trim()).filter(Boolean).forEach(x=>{ if(!names.includes(x)) names.push(x); });
+      data.tasks = names.map(n=>({name:n, done: prevDone.get(n)||false}));
+    }
+    if(r){ await updateDoc(doc(state.db, REFILLS_COLLECTION, r.id), data); }
+    else {
+      const nid = "rf_" + Date.now().toString(36) + Math.random().toString(36).slice(2,6);
+      await setDoc(doc(state.db, REFILLS_COLLECTION, nid), {
+        ...data, tasks: data.tasks || [], status:"received", receivedAt: now,
+        createdBy: state.role, createdByName: roleName(state.role), notified:false
+      });
+    }
+    closeModal();
+  });
+}
+
+async function moveRefill(id, dir){
+  if(!isRefillWorker()) return;
+  const r = state.refills.find(x=>x.id===id);
+  if(!r) return;
+  const i = REFILL_STATUSES.findIndex(s=>s.id===r.status);
+  const target = REFILL_STATUSES[i+dir];
+  if(!target) return;
+  const now = new Date().toISOString();
+  const upd = {status: target.id, updatedAt: now};
+  if(dir>0){
+    if(target.id==="inprogress") upd.startedAt = now;
+    if(target.id==="ready") upd.readyAt = now;
+    if(target.id==="delivered") upd.deliveredAt = now;
+  } else {
+    if(r.status==="delivered") upd.deliveredAt = null;
+    if(r.status==="ready"){ upd.readyAt = null; upd.notified = false; upd.notifiedAt = null; }
+    if(r.status==="inprogress") upd.startedAt = null;
+  }
+  await updateDoc(doc(state.db, REFILLS_COLLECTION, id), upd);
+}
+
+async function toggleRefillTask(id, idx){
+  if(!isRefillWorker()) return;
+  const r = state.refills.find(x=>x.id===id);
+  if(!r) return;
+  const tasks = (r.tasks||[]).map(t=>({...t}));
+  if(!tasks[idx]) return;
+  tasks[idx].done = !tasks[idx].done;
+  await updateDoc(doc(state.db, REFILLS_COLLECTION, id), {tasks, updatedAt: new Date().toISOString()});
+}
+
+async function toggleRefillNotified(id){
+  const r = state.refills.find(x=>x.id===id);
+  if(!r || !canNotifyRefill(r)) return;
+  const now = new Date().toISOString();
+  await updateDoc(doc(state.db, REFILLS_COLLECTION, id), {notified: !r.notified, notifiedAt: r.notified ? null : now, updatedAt: now});
+}
+
+async function deleteRefill(id){
+  const r = state.refills.find(x=>x.id===id);
+  if(!r || !canDeleteRefill(r)) return;
+  if(!confirm(`Διαγραφή της καρτέλας "${r.customer||""}"; Δεν αναιρείται.`)) return;
+  await deleteDoc(doc(state.db, REFILLS_COLLECTION, id));
+}
+
 /* ============ main update ============ */
 function update(){
+  if(isPyro()) state.activeTab = "refill";
+  else if(state.activeTab === "refill" && !canUseRefills()) state.activeTab = "inventory";
   updateStatus();
   updateCartFab();
   document.getElementById("searchWrap").classList.toggle("hidden", state.activeTab !== "inventory");
+
+  if(state.activeTab === "refill"){
+    document.getElementById("catRail").innerHTML = "";
+    document.getElementById("subRail").innerHTML = ""; document.getElementById("sub2Rail").innerHTML = "";
+    renderRefillTab();
+    return;
+  }
 
   if(state.activeTab === "orders"){
     document.getElementById("catRail").innerHTML = "";
