@@ -1119,7 +1119,7 @@ function onRootClick(e){
   else if(action==="refill-next"){ moveRefill(el.dataset.id, +1); }
   else if(action==="refill-prev"){ moveRefill(el.dataset.id, -1); }
   else if(action==="refill-delete"){ deleteRefill(el.dataset.id); }
-  else if(action==="refill-task"){ toggleRefillTask(el.dataset.id, Number(el.dataset.idx)); }
+  else if(action==="refill-work"){ openRefillWorkModal(el.dataset.id); }
   else if(action==="refill-notify"){ toggleRefillNotified(el.dataset.id); }
   else if(action==="refill-lab-filter"){ refillLabFilter = el.dataset.f; renderRefillTab(); }
   else if(action==="refill-filter"){ refillFilter = el.dataset.f; renderRefillTab(); }
@@ -1211,8 +1211,16 @@ const REFILL_DELIVERY = [
   {id:"store",   label:"Θα το παραλάβει ο πελάτης από το κατάστημα"},
   {id:"deliver", label:"Θα τον πάμε εμείς στον πελάτη"},
 ];
-const REFILL_TASKS = ["Αναγόμωση","Έλεγχος / δοκιμή πίεσης","Υδραυλική δοκιμή","Αντικατάσταση μανόμετρου","Αντικατάσταση βαλβίδας","Αντικατάσταση σωλήνα / ακροφυσίου","Βάψιμο","Νέα ετικέτα / σφράγιση"];
-const REFILL_TYPES = ["Ξηρή σκόνη ABC","Ξηρή σκόνη BC","CO2","Αφρού","Νερού","Λεπτού νερού","Άλλο"];
+const REFILL_WORK = [
+  {key:"refilled", label:"Αναγόμωση",            unit:"τεμ."},
+  {key:"unfit",    label:"Ακατάλληλοι",          unit:"τεμ."},
+  {key:"gauge",    label:"Αλλαγή μανόμετρου",    unit:"τεμ."},
+  {key:"powder",   label:"Αντικατάσταση σκόνης", unit:"kg"},
+  {key:"valve",    label:"Αλλαγή κλείστρου",     unit:"τεμ."},
+  {key:"hose",     label:"Αλλαγή λάστιχου",      unit:"τεμ."},
+  {key:"funnel",   label:"Αλλαγή χοάνης (μόνο CO2)", unit:"τεμ."},
+];
+const REFILL_TYPES = ["Ξηράς Σκόνης","Διοξειδίου CO2","Αφρού"];
 const REFILL_SIZES = ["1","2","3","4","5","6","9","12","25","50"];
 let refillFilter = "active";
 let refillLabFilter = "all";
@@ -1270,8 +1278,9 @@ function filteredRefills(){
 function refillCardHtml(r){
   const st = refillStatus(r.status);
   const lines = refillLines(r);
-  const tasks = r.tasks || [];
+  const w = r.work || {};
   const worker = isRefillWorker();
+  const workChips = REFILL_WORK.filter(x=>Number(w[x.key]||0)>0).map(x=>`<span style="border:1px solid #111; border-radius:999px; padding:2px 9px; font-size:11.5px; ${x.key==="unfit" ? "background:#111;color:#FFD400;" : "background:#fff;color:#111;"}">${x.label}: <b>${Number(w[x.key])}</b> ${x.unit}</span>`).join("");
   const stColor = r.status==="ready" ? "background:#111;color:#FFD400;" : r.status==="delivered" ? "background:#ddd;color:#555;" : "background:#FFD400;color:#111;border:1px solid #111;";
   const prev = REFILL_STATUSES[REFILL_STATUSES.findIndex(s=>s.id===r.status)-1];
   const isReady = r.status==="ready" || r.status==="delivered";
@@ -1295,12 +1304,7 @@ function refillCardHtml(r){
       ${r.receivedBy ? `👤 Παρέλαβε: <b>${esc(r.receivedBy)}</b><br>` : ""}
       ${r.delivery ? `⬆ ${esc(optLabel(REFILL_DELIVERY,r.delivery))}` : ""}
     </div>
-    ${tasks.length ? `<div style="display:flex; flex-wrap:wrap; gap:5px; margin-top:8px;">
-      ${tasks.map((t,i)=> worker
-        ? `<button data-action="refill-task" data-id="${r.id}" data-idx="${i}" style="border:1px solid #111; border-radius:999px; padding:2px 9px; font-size:11.5px; cursor:pointer; ${t.done ? "background:#111;color:#FFD400;" : "background:#fff;color:#111;"}">${t.done ? "✓ " : ""}${esc(t.name)}</button>`
-        : `<span style="border:1px solid #111; border-radius:999px; padding:2px 9px; font-size:11.5px; ${t.done ? "background:#111;color:#FFD400;" : "background:#fff;color:#111;"}">${t.done ? "✓ " : ""}${esc(t.name)}</span>`
-      ).join("")}
-    </div>` : ""}
+    ${workChips ? `<div style="margin-top:8px;"><div style="font-size:11px; font-weight:700; text-transform:uppercase; color:var(--text-faint); margin-bottom:4px;">Εργασίες αναγομωτηρίου</div><div style="display:flex; flex-wrap:wrap; gap:5px;">${workChips}</div></div>` : ""}
     ${r.notes ? `<div style="margin-top:8px; font-size:12.5px; font-style:italic; color:var(--text-dim);">${esc(r.notes)}</div>` : ""}
     <div style="display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; align-items:center;">
       ${pill(isReady ? "Έτοιμοι: ΝΑΙ" : "Έτοιμοι: ΟΧΙ", isReady)}
@@ -1314,6 +1318,7 @@ function refillCardHtml(r){
     <div style="display:flex; gap:6px; margin-top:12px;">
       ${worker && r.status!=="delivered" ? `<button class="btn btn-primary" style="flex:2; padding:9px 6px; font-size:13px;" data-action="refill-next" data-id="${r.id}">${st.nextLabel}</button>` : ""}
       ${worker && prev ? `<button class="btn btn-ghost" style="flex:none; padding:9px 12px;" title="Πίσω στο «${prev.label}»" data-action="refill-prev" data-id="${r.id}">↩</button>` : ""}
+      ${worker ? `<button class="btn btn-ghost" style="flex:none; padding:9px 12px;" title="Εργασίες αναγομωτηρίου" data-action="refill-work" data-id="${r.id}">🔧 Εργασίες</button>` : ""}
       ${canEditRefillInfo(r) ? `<button class="btn btn-ghost" style="flex:none; padding:9px 12px;" data-action="refill-edit" data-id="${r.id}">✏️</button>` : ""}
       ${canDeleteRefill(r) ? `<button class="btn btn-danger" style="flex:none; padding:9px 12px;" data-action="refill-delete" data-id="${r.id}">🗑️</button>` : ""}
     </div>
@@ -1368,8 +1373,6 @@ function openRefillModal(id){
   const r = id ? state.refills.find(x=>x.id===id) : null;
   if(r && !canEditRefillInfo(r)) return;
   const worker = isRefillWorker();
-  const chosen = new Set((r?.tasks||[]).map(t=>t.name));
-  const extraTasks = (r?.tasks||[]).filter(t=>!REFILL_TASKS.includes(t.name)).map(t=>t.name).join(", ");
   const lines = r ? refillLines(r) : [null];
   const sel = (idn, list, cur, withEmpty)=>`<select id="${idn}" style="width:100%;">${withEmpty?'<option value="">—</option>':""}${list.map(o=>`<option value="${o.id}" ${cur===o.id?"selected":""}>${esc(o.label)}</option>`).join("")}</select>`;
   showModal(`
@@ -1392,12 +1395,6 @@ function openRefillModal(id){
       <input id="rf_by" type="text" value="${esc(r?.receivedBy||"")}" autocomplete="off">
       <label>Πώς θα παραδοθούν μετά</label>
       ${sel("rf_delivery", REFILL_DELIVERY, r?.delivery, true)}
-      ${worker ? `
-      <label>Εργασίες συντήρησης</label>
-      <div id="rf_tasks" style="display:flex; flex-direction:column; gap:5px; margin-bottom:6px;">
-        ${REFILL_TASKS.map(t=>`<label style="display:flex; gap:8px; align-items:center; font-size:14px; text-transform:none; letter-spacing:0; margin:0; font-weight:400; color:var(--text);"><input type="checkbox" value="${esc(t)}" ${chosen.has(t)?"checked":""}> ${esc(t)}</label>`).join("")}
-      </div>
-      <input id="rf_extra" type="text" placeholder="Άλλες εργασίες (χωρισμένες με κόμμα)" value="${esc(extraTasks)}" autocomplete="off">` : ""}
       <label>Σημειώσεις</label>
       <textarea id="rf_notes" rows="2">${esc(r?.notes||"")}</textarea>
       <div class="modal-actions">
@@ -1433,17 +1430,11 @@ function openRefillModal(id){
       notes: document.getElementById("rf_notes").value.trim(),
       updatedAt: now,
     };
-    if(worker){
-      const prevDone = new Map((r?.tasks||[]).map(t=>[t.name, !!t.done]));
-      const names = Array.from(document.querySelectorAll("#rf_tasks input:checked")).map(i=>i.value);
-      document.getElementById("rf_extra").value.split(",").map(x=>x.trim()).filter(Boolean).forEach(x=>{ if(!names.includes(x)) names.push(x); });
-      data.tasks = names.map(n=>({name:n, done: prevDone.get(n)||false}));
-    }
     if(r){ await updateDoc(doc(state.db, REFILLS_COLLECTION, r.id), data); }
     else {
       const nid = "rf_" + Date.now().toString(36) + Math.random().toString(36).slice(2,6);
       await setDoc(doc(state.db, REFILLS_COLLECTION, nid), {
-        ...data, tasks: data.tasks || [], status:"received", receivedAt: now,
+        ...data, work:{}, status:"received", receivedAt: now,
         createdBy: state.role, createdByName: roleName(state.role), notified:false
       });
     }
@@ -1472,14 +1463,38 @@ async function moveRefill(id, dir){
   await updateDoc(doc(state.db, REFILLS_COLLECTION, id), upd);
 }
 
-async function toggleRefillTask(id, idx){
-  if(!isRefillWorker()) return;
+function openRefillWorkModal(id){
   const r = state.refills.find(x=>x.id===id);
-  if(!r) return;
-  const tasks = (r.tasks||[]).map(t=>({...t}));
-  if(!tasks[idx]) return;
-  tasks[idx].done = !tasks[idx].done;
-  await updateDoc(doc(state.db, REFILLS_COLLECTION, id), {tasks, updatedAt: new Date().toISOString()});
+  if(!r || !isRefillWorker()) return;
+  const w = r.work || {};
+  const hasCO2 = refillLines(r).some(l=>l.type==="Διοξειδίου CO2" || l.type==="CO2");
+  const fields = REFILL_WORK.filter(x=>x.key!=="funnel" || hasCO2 || Number(w.funnel||0)>0);
+  showModal(`
+    <div class="modal" style="position:relative; max-width:420px;">
+      <button class="close-x" data-action="close-modal">✕</button>
+      <h3>Εργασίες — ${esc(r.customer||"")}</h3>
+      <div style="font-size:12.5px; color:var(--text-dim); margin-bottom:6px;">
+        ${refillLines(r).map(l=>`${Number(l.qty||1)} × ${esc(l.type||"")}${l.size?" "+esc(l.size)+"kg":""}`).join(" · ")} — σύνολο ${refillTotalQty(r)} τεμ.
+      </div>
+      ${fields.map(x=>`
+        <div style="display:flex; align-items:center; gap:8px; margin-top:10px;">
+          <span style="flex:1; font-size:14px; font-weight:600;">${x.label}</span>
+          <input class="rf-work" data-key="${x.key}" type="number" min="0" step="${x.key==="powder"?"0.1":"1"}" value="${Number(w[x.key]||0)}" style="width:80px;">
+          <span style="width:32px; font-size:12px; color:var(--text-dim);">${x.unit}</span>
+        </div>`).join("")}
+      <div class="modal-actions">
+        <button class="btn btn-ghost" data-action="close-modal">Άκυρο</button>
+        <button class="btn btn-primary" id="rfWorkSave">Αποθήκευση</button>
+      </div>
+    </div>`);
+  document.getElementById("rfWorkSave").addEventListener("click", async ()=>{
+    const work = {...(r.work||{})};
+    document.querySelectorAll(".rf-work").forEach(inp=>{
+      work[inp.dataset.key] = Math.max(0, Number(inp.value)||0);
+    });
+    await updateDoc(doc(state.db, REFILLS_COLLECTION, id), {work, updatedAt: new Date().toISOString()});
+    closeModal();
+  });
 }
 
 async function toggleRefillNotified(id){
