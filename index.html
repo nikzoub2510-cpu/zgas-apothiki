@@ -497,8 +497,8 @@ const ROLES = [
   {id:"rethymno", name:"ΡΕΘΥΜΝΟ", pin:"4925"},
   {id:"apothiki", name:"ΑΠΟΘΗΚΗ", pin:"110"},
   {id:"fortigo", name:"ΦΟΡΤΗΓΟ", pin:"685"},
-  {id:"pyro_wh", name:"ΠΥΡΟΣΒΕΣΤΗΡΕΣ ΑΠΟΘΗΚΗΣ", pin:"110"},
-  {id:"pyro_shop", name:"ΠΥΡΟΣΒΕΣΤΗΡΕΣ ΚΑΤΑΣΤΗΜΑΤΟΣ", pin:"120"},
+  {id:"pyro_wh", name:"ΠΥΡΟΣΒΕΣΤΗΡΕΣ ΑΠΟΘΗΚΗΣ", pin:"110", refill:"Αποθήκης"},
+  {id:"pyro_shop", name:"ΠΥΡΟΣΒΕΣΤΗΡΕΣ ΚΑΤΑΣΤΗΜΑΤΟΣ", pin:"120", refill:"Ρέθυμνο"},
   {id:"admin", name:"ΔΙΑΧΕΙΡΙΣΤΗΣ", pin:"2510"},
 ];
 const STORE_ROLES = ["xania","rethymno","fortigo"];
@@ -1238,11 +1238,17 @@ function refillLines(r){
   if(Array.isArray(r.lines) && r.lines.length) return r.lines;
   return r.type ? [{type:r.type, size:r.size||"", qty:Number(r.qty||1)}] : []; // παλιές καρτέλες
 }
+function refillDoneTotal(r){ const w = r.work || {}; return Number(w.refilled||0) + Number(w.unfit||0); } // αναγομώσεις + ακατάλληλοι
+function refillTotalLabel(r){
+  const declared = refillTotalQty(r), done = refillDoneTotal(r);
+  if(done > 0) return `σύνολο ${done}` + (done !== declared ? ` · δηλώθηκαν ${declared}` : "");
+  return `σύνολο ${declared}`;
+}
 function refillTotalQty(r){ return refillLines(r).reduce((a,l)=>a+Number(l.qty||0),0); }
 function isMyRefill(r){ return r.createdBy === state.role; }
 function canEditRefillInfo(r){ return isRefillWorker() || (isMyRefill(r) && r.status==="received"); }
 function canDeleteRefill(r){ return isRefillWorker() || (isMyRefill(r) && r.status==="received"); }
-function canNotifyRefill(r){ return isRefillWorker() || isMyRefill(r); }
+function canNotifyRefill(r){ return isAdmin() || (isStoreRole() && isMyRefill(r)); } // μόνο το κατάστημα που την έφτιαξε (και ο διαχειριστής)
 
 function attachRefillsListener(){
   const colRef = collection(state.db, REFILLS_COLLECTION);
@@ -1307,7 +1313,7 @@ function refillCardHtml(r){
     </div>
     <div style="font-size:12.5px; margin-top:5px; line-height:1.35;">
       ${lines.map(l=>`<b>${Number(l.qty||1)}×</b> ${esc(l.type||"")}${l.size ? " " + esc(l.size) + "kg" : ""}`).join(" · ")}
-      <span style="${small}">(σύνολο ${refillTotalQty(r)})</span>
+      <span style="${small}">(${refillTotalLabel(r)})</span>
     </div>
     <div style="${small} margin-top:3px; line-height:1.35;">
       ${r.intake ? `⬇ ${esc(optLabel(REFILL_INTAKE,r.intake))}` : ""}${r.receivedBy ? ` · 👤 ${esc(r.receivedBy)}` : ""}${r.delivery ? `<br>⬆ ${esc(optLabel(REFILL_DELIVERY,r.delivery))}` : ""}
@@ -1480,7 +1486,7 @@ function openRefillWorkModal(id){
       <button class="close-x" data-action="close-modal">✕</button>
       <h3>Εργασίες — ${esc(r.customer||"")}</h3>
       <div style="font-size:12.5px; color:var(--text-dim); margin-bottom:6px;">
-        ${refillLines(r).map(l=>`${Number(l.qty||1)} × ${esc(l.type||"")}${l.size?" "+esc(l.size)+"kg":""}`).join(" · ")} — σύνολο ${refillTotalQty(r)} τεμ.
+        ${refillLines(r).map(l=>`${Number(l.qty||1)} × ${esc(l.type||"")}${l.size?" "+esc(l.size)+"kg":""}`).join(" · ")} — δηλώθηκαν ${refillTotalQty(r)} τεμ.
       </div>
       ${fields.map(x=>`
         <div style="display:flex; align-items:center; gap:8px; margin-top:10px;">
@@ -1488,11 +1494,20 @@ function openRefillWorkModal(id){
           <input class="rf-work" data-key="${x.key}" type="number" min="0" step="${x.key==="powder"?"0.1":"1"}" value="${Number(w[x.key]||0)}" style="width:80px;">
           <span style="width:32px; font-size:12px; color:var(--text-dim);">${x.unit}</span>
         </div>`).join("")}
+      <div id="rfWorkTotal" style="margin-top:12px; padding:8px 10px; border:1px solid #111; border-radius:8px; font-size:13.5px; font-weight:800;"></div>
       <div class="modal-actions">
         <button class="btn btn-ghost" data-action="close-modal">Άκυρο</button>
         <button class="btn btn-primary" id="rfWorkSave">Αποθήκευση</button>
       </div>
     </div>`);
+  const declared = refillTotalQty(r);
+  const calc = ()=>{
+    const v = k => Number((document.querySelector('.rf-work[data-key="'+k+'"]')||{}).value)||0;
+    const t = v("refilled") + v("unfit");
+    document.getElementById("rfWorkTotal").textContent = `Σύνολο τεμαχίων: ${t} (αναγομώσεις ${v("refilled")} + ακατάλληλοι ${v("unfit")})` + (t !== declared ? ` — δηλώθηκαν ${declared}` : " ✓");
+  };
+  document.querySelectorAll(".rf-work").forEach(i=>i.addEventListener("input", calc));
+  calc();
   document.getElementById("rfWorkSave").addEventListener("click", async ()=>{
     const work = {...(r.work||{})};
     document.querySelectorAll(".rf-work").forEach(inp=>{
@@ -1888,8 +1903,14 @@ function renderRoleLogin(error){
         <img class="setup-hero" src="${LOGO_HERO}" alt="ZGAS">
         <h1>ZGAS · Αποθήκη</h1>
         <div class="sub">Επίλεξε με ποια ιδιότητα μπαίνεις.</div>
-        <div id="roleGrid" style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:18px;">
-          ${ROLES.map(r=>`<button class="btn btn-ghost" data-role="${r.id}" style="padding:16px; font-size:14px;">${esc(r.name)}</button>`).join("")}
+        <div id="roleGrid" style="display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:18px; align-items:start;">
+          <div style="display:flex; flex-direction:column; gap:10px;">
+            ${ROLES.filter(r=>!r.refill).map(r=>`<button class="btn btn-ghost" data-role="${r.id}" style="padding:16px; font-size:14px;">${esc(r.name)}</button>`).join("")}
+          </div>
+          <div style="display:flex; flex-direction:column; gap:10px;">
+            <div style="font-size:13px; font-weight:800; text-transform:uppercase; letter-spacing:.04em; padding:6px 0;">Αναγομωτήρια</div>
+            ${ROLES.filter(r=>r.refill).map(r=>`<button class="btn btn-ghost" data-role="${r.id}" style="padding:16px; font-size:14px;">${esc(r.refill)}</button>`).join("")}
+          </div>
         </div>
       </div>
     </div>
