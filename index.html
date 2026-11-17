@@ -1280,47 +1280,46 @@ function refillCardHtml(r){
   const lines = refillLines(r);
   const w = r.work || {};
   const worker = isRefillWorker();
-  const workChips = REFILL_WORK.filter(x=>Number(w[x.key]||0)>0).map(x=>`<span style="border:1px solid #111; border-radius:999px; padding:2px 9px; font-size:11.5px; ${x.key==="unfit" ? "background:#111;color:#FFD400;" : "background:#fff;color:#111;"}">${x.label}: <b>${Number(w[x.key])}</b> ${x.unit}</span>`).join("");
+  const workChips = REFILL_WORK.filter(x=>Number(w[x.key]||0)>0).map(x=>`<span style="border:1px solid #111; border-radius:999px; padding:1px 7px; font-size:10.5px; ${x.key==="unfit" ? "background:#111;color:#FFD400;" : "background:#fff;color:#111;"}">${x.label}: <b>${Number(w[x.key])}</b> ${x.unit}</span>`).join("");
   const stColor = r.status==="ready" ? "background:#111;color:#FFD400;" : r.status==="delivered" ? "background:#ddd;color:#555;" : "background:#FFD400;color:#111;border:1px solid #111;";
   const prev = REFILL_STATUSES[REFILL_STATUSES.findIndex(s=>s.id===r.status)-1];
   const isReady = r.status==="ready" || r.status==="delivered";
-  const pill = (txt, on)=>`<span style="display:inline-block; font-size:11px; font-weight:700; padding:2px 8px; border-radius:999px; border:1px solid #111; ${on ? "background:#111;color:#FFD400;" : "background:#fff;color:#111;"}">${txt}</span>`;
+  const notified = !!r.notified;
+  const cardStyle = notified
+    ? "background:#d8f5d8; border:2px solid #1f9d3a;"
+    : "";
+  const small = "font-size:11.5px; color:var(--text-dim);";
   return `
-  <div class="order-card" style="${r.status==="delivered" ? "opacity:.65;" : ""}">
-    <div style="display:flex; justify-content:space-between; gap:8px; align-items:flex-start;">
-      <h3 style="margin:0;">${esc(r.customer||"—")}</h3>
-      <span style="${stColor} font-size:11px; font-weight:800; padding:3px 9px; border-radius:999px; white-space:nowrap;">${esc(st.label)}</span>
+  <div class="order-card" style="padding:9px 11px; ${cardStyle} ${r.status==="delivered" ? "opacity:.7;" : ""}">
+    <div style="display:flex; justify-content:space-between; gap:6px; align-items:center;">
+      <div style="font-size:15px; font-weight:800; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(r.customer||"—")}</div>
+      <span style="${stColor} font-size:10.5px; font-weight:800; padding:2px 8px; border-radius:999px; white-space:nowrap;">${esc(st.label)}</span>
     </div>
-    ${r.phone ? `<div style="margin-top:4px;"><a href="tel:${esc(r.phone)}" style="color:inherit; font-weight:700;">📞 ${esc(r.phone)}</a></div>` : ""}
-    <div style="margin-top:6px; font-size:12px; color:var(--text-dim);">
-      Από: <b>${esc(r.createdByName||roleName(r.createdBy)||"—")}</b> · Αναγομωτήριο: <b>${esc(labName(r.lab)||"—")}</b>
+    <div style="${small} margin-top:2px;">
+      ${r.phone ? `<a href="tel:${esc(r.phone)}" style="color:inherit; font-weight:700;">📞 ${esc(r.phone)}</a> · ` : ""}${esc(r.createdByName||roleName(r.createdBy)||"—")} · Αναγ. <b>${esc(labName(r.lab)||"—")}</b>
     </div>
-    <div style="margin-top:8px; font-size:14px;">
-      ${lines.map(l=>`<div><b>${Number(l.qty||1)} ×</b> ${esc(l.type||"")}${l.size ? " " + esc(l.size) + "kg" : ""}</div>`).join("")}
-      <div style="font-size:12px; color:var(--text-dim); margin-top:2px;">Σύνολο: ${refillTotalQty(r)} τεμ.</div>
+    <div style="font-size:12.5px; margin-top:5px; line-height:1.35;">
+      ${lines.map(l=>`<b>${Number(l.qty||1)}×</b> ${esc(l.type||"")}${l.size ? " " + esc(l.size) + "kg" : ""}`).join(" · ")}
+      <span style="${small}">(σύνολο ${refillTotalQty(r)})</span>
     </div>
-    <div style="margin-top:8px; font-size:12px; color:var(--text-dim); line-height:1.5;">
-      ${r.intake ? `⬇ ${esc(optLabel(REFILL_INTAKE,r.intake))}<br>` : ""}
-      ${r.receivedBy ? `👤 Παρέλαβε: <b>${esc(r.receivedBy)}</b><br>` : ""}
-      ${r.delivery ? `⬆ ${esc(optLabel(REFILL_DELIVERY,r.delivery))}` : ""}
+    <div style="${small} margin-top:3px; line-height:1.35;">
+      ${r.intake ? `⬇ ${esc(optLabel(REFILL_INTAKE,r.intake))}` : ""}${r.receivedBy ? ` · 👤 ${esc(r.receivedBy)}` : ""}${r.delivery ? `<br>⬆ ${esc(optLabel(REFILL_DELIVERY,r.delivery))}` : ""}
     </div>
-    ${workChips ? `<div style="margin-top:8px;"><div style="font-size:11px; font-weight:700; text-transform:uppercase; color:var(--text-faint); margin-bottom:4px;">Εργασίες αναγομωτηρίου</div><div style="display:flex; flex-wrap:wrap; gap:5px;">${workChips}</div></div>` : ""}
-    ${r.notes ? `<div style="margin-top:8px; font-size:12.5px; font-style:italic; color:var(--text-dim);">${esc(r.notes)}</div>` : ""}
-    <div style="display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; align-items:center;">
-      ${pill(isReady ? "Έτοιμοι: ΝΑΙ" : "Έτοιμοι: ΟΧΙ", isReady)}
-      ${isReady ? (canNotifyRefill(r)
-        ? `<button data-action="refill-notify" data-id="${r.id}" style="cursor:pointer; border:1px solid #111; border-radius:999px; padding:2px 10px; font-size:11px; font-weight:700; ${r.notified ? "background:#111;color:#FFD400;" : "background:#fff;color:#111;"}">${r.notified ? "✓ Ενημερώθηκε ο πελάτης" + (r.notifiedAt ? " ("+fmtDate(r.notifiedAt)+")" : "") : "Δεν έχει ενημερωθεί — πάτα όταν ενημερωθεί"}</button>`
-        : pill(r.notified ? "✓ Ενημερώθηκε" : "Δεν έχει ενημερωθεί", !!r.notified)) : ""}
+    ${workChips ? `<div style="display:flex; flex-wrap:wrap; gap:4px; margin-top:5px;">${workChips}</div>` : ""}
+    ${r.notes ? `<div style="margin-top:4px; font-size:11.5px; font-style:italic; color:var(--text-dim);">${esc(r.notes)}</div>` : ""}
+    ${canNotifyRefill(r) ? `
+    <button data-action="refill-notify" data-id="${r.id}" style="width:100%; margin-top:7px; cursor:pointer; border-radius:8px; padding:6px 8px; font-size:12px; font-weight:800; text-align:left; ${notified ? "background:#1f9d3a;color:#fff;border:1px solid #1f9d3a;" : "background:#fff;color:#111;border:1px solid #111;"}">
+      ${notified ? "☑ Ενημερώθηκε ο πελάτης ότι είναι έτοιμοι" + (r.notifiedAt ? " (" + fmtDate(r.notifiedAt) + ")" : "") : "☐ Ενημερώθηκε ο πελάτης ότι είναι έτοιμοι;"}
+    </button>` : (notified ? `<div style="margin-top:7px; font-size:12px; font-weight:800; color:#1f7a32;">☑ Ο πελάτης ενημερώθηκε</div>` : "")}
+    <div style="${small} font-size:10.5px; margin-top:5px;">
+      ${isReady ? "✓ Έτοιμοι" : "Δεν είναι έτοιμοι"} · Παραλαβή ${fmtDate(r.receivedAt)}${r.readyAt ? " · Έτοιμοι " + fmtDate(r.readyAt) : ""}${r.deliveredAt ? " · Παράδοση " + fmtDate(r.deliveredAt) : ""}
     </div>
-    <div style="margin-top:8px; font-size:11.5px; color:var(--text-faint);">
-      Παραλαβή: ${fmtDate(r.receivedAt)}${r.readyAt ? " · Έτοιμοι: " + fmtDate(r.readyAt) : ""}${r.deliveredAt ? " · Παράδοση: " + fmtDate(r.deliveredAt) : ""}
-    </div>
-    <div style="display:flex; gap:6px; margin-top:12px;">
-      ${worker && r.status!=="delivered" ? `<button class="btn btn-primary" style="flex:2; padding:9px 6px; font-size:13px;" data-action="refill-next" data-id="${r.id}">${st.nextLabel}</button>` : ""}
-      ${worker && prev ? `<button class="btn btn-ghost" style="flex:none; padding:9px 12px;" title="Πίσω στο «${prev.label}»" data-action="refill-prev" data-id="${r.id}">↩</button>` : ""}
-      ${worker ? `<button class="btn btn-ghost" style="flex:none; padding:9px 12px;" title="Εργασίες αναγομωτηρίου" data-action="refill-work" data-id="${r.id}">🔧 Εργασίες</button>` : ""}
-      ${canEditRefillInfo(r) ? `<button class="btn btn-ghost" style="flex:none; padding:9px 12px;" data-action="refill-edit" data-id="${r.id}">✏️</button>` : ""}
-      ${canDeleteRefill(r) ? `<button class="btn btn-danger" style="flex:none; padding:9px 12px;" data-action="refill-delete" data-id="${r.id}">🗑️</button>` : ""}
+    <div style="display:flex; gap:5px; margin-top:7px;">
+      ${worker && r.status!=="delivered" ? `<button class="btn btn-primary" style="flex:2; padding:6px 4px; font-size:12px;" data-action="refill-next" data-id="${r.id}">${st.nextLabel}</button>` : ""}
+      ${worker && prev ? `<button class="btn btn-ghost" style="flex:none; padding:6px 9px; font-size:12px;" title="Πίσω στο «${prev.label}»" data-action="refill-prev" data-id="${r.id}">↩</button>` : ""}
+      ${worker ? `<button class="btn btn-ghost" style="flex:none; padding:6px 9px; font-size:12px;" data-action="refill-work" data-id="${r.id}">🔧 Εργασίες</button>` : ""}
+      ${canEditRefillInfo(r) ? `<button class="btn btn-ghost" style="flex:none; padding:6px 9px; font-size:12px;" data-action="refill-edit" data-id="${r.id}">✏️</button>` : ""}
+      ${canDeleteRefill(r) ? `<button class="btn btn-danger" style="flex:none; padding:6px 9px; font-size:12px;" data-action="refill-delete" data-id="${r.id}">🗑️</button>` : ""}
     </div>
   </div>`;
 }
